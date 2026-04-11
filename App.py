@@ -13,8 +13,7 @@ ALPHAVANTAGE_KEY = st.secrets.get("ALPHAVANTAGE_KEY", os.getenv("ALPHAVANTAGE_KE
 MARKETAUX_KEY = st.secrets.get("MARKETAUX_KEY", os.getenv("MARKETAUX_KEY", ""))
 TRADING_ECONOMICS_KEY = st.secrets.get("TRADING_ECONOMICS_KEY", os.getenv("TRADING_ECONOMICS_KEY", ""))
 
-st.markdown(
-    """
+st.markdown("""
 <style>
 .block-container {padding-top: 1rem; max-width: 1280px;}
 html, body, [class*="css"] {background:#000000; color:#f5f5f5;}
@@ -40,9 +39,7 @@ html, body, [class*="css"] {background:#000000; color:#f5f5f5;}
 .topic {color:#9ca3af; font-weight:700; text-transform:uppercase; font-size:.72rem; letter-spacing:.08em;}
 a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 st.title("DAILY MARKET BRIEF")
 st.caption("US stocks only - catalysts, analyst moves, pre-market, and macro events")
@@ -50,16 +47,8 @@ st.caption("US stocks only - catalysts, analyst moves, pre-market, and macro eve
 
 def classify_thesis(title: str) -> str:
     t = (title or "").lower()
-    bullish = [
-        "beats", "beat", "raises", "raised", "upgrade", "upgrades", "bullish", "surge",
-        "record", "buy", "strong", "top pick", "approval", "approved", "expands",
-        "growth", "overweight", "outperform", "positive"
-    ]
-    bearish = [
-        "misses", "miss", "cuts", "cut", "downgrade", "downgrades", "bearish", "plunge",
-        "weak", "warning", "sell", "lawsuit", "investigation", "recall", "slumps",
-        "slump", "probe", "underweight", "underperform", "negative"
-    ]
+    bullish = ["beats", "beat", "raises", "raised", "upgrade", "upgrades", "bullish", "surge", "record", "buy", "strong", "top pick", "approval", "approved", "expands", "growth", "overweight", "outperform", "positive"]
+    bearish = ["misses", "miss", "cuts", "cut", "downgrade", "downgrades", "bearish", "plunge", "weak", "warning", "sell", "lawsuit", "investigation", "recall", "slumps", "slump", "probe", "underweight", "underperform", "negative"]
     if any(k in t for k in bullish):
         return "Bullish"
     if any(k in t for k in bearish):
@@ -70,11 +59,7 @@ def classify_thesis(title: str) -> str:
 def classify_importance(row) -> str:
     txt = " ".join(str(row.get(c, "")) for c in ["title", "sentiment", "tickers"]).lower()
     score = 0
-    for k in [
-        "earnings", "guidance", "fda", "sec", "merger", "acquisition", "upgrade",
-        "downgrade", "rates", "inflation", "jobs", "cpi", "fed", "split", "ipo",
-        "approval", "bankruptcy", "lawsuit", "deal", "conference", "meeting minutes"
-    ]:
+    for k in ["earnings", "guidance", "fda", "sec", "merger", "acquisition", "upgrade", "downgrade", "rates", "inflation", "jobs", "cpi", "fed", "split", "ipo", "approval", "bankruptcy", "lawsuit", "deal", "conference", "meeting minutes"]:
         if k in txt:
             score += 1
     return "Notable" if score >= 2 else "Moderate"
@@ -143,30 +128,19 @@ def get_alpha_news():
         "tickers": "AAPL,MSFT,AMZN,NVDA,GOOGL,GOOG,META,TSLA,AMD,INTC",
     }
     try:
-        r = requests.get(
-            "https://www.alphavantage.co/query",
-            params=params,
-            timeout=30,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
+        r = requests.get("https://www.alphavantage.co/query", params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         rows = []
         for x in r.json().get("feed", []):
-            tks = [
-                t.get("ticker", "")
-                for t in x.get("ticker_sentiment", [])
-                if t.get("ticker", "").isalpha()
-            ]
-            rows.append(
-                {
-                    "time": x.get("time_published"),
-                    "title": x.get("title"),
-                    "source": x.get("source"),
-                    "url": x.get("url"),
-                    "sentiment": x.get("overall_sentiment_label"),
-                    "tickers": ",".join(tks[:5]),
-                }
-            )
+            tks = [t.get("ticker", "") for t in x.get("ticker_sentiment", []) if t.get("ticker", "").isalpha()]
+            rows.append({
+                "time": x.get("time_published"),
+                "title": x.get("title"),
+                "source": x.get("source"),
+                "url": x.get("url"),
+                "sentiment": x.get("overall_sentiment_label"),
+                "tickers": ",".join(tks[:5]),
+            })
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -176,38 +150,21 @@ def get_alpha_news():
 def get_marketaux_news():
     if not MARKETAUX_KEY:
         return pd.DataFrame()
-    params = {
-        "api_token": MARKETAUX_KEY,
-        "language": "en",
-        "countries": "us",
-        "limit": 50,
-        "group_similar": "true",
-    }
+    params = {"api_token": MARKETAUX_KEY, "language": "en", "countries": "us", "limit": 50, "group_similar": "true"}
     try:
-        r = requests.get(
-            "https://api.marketaux.com/v1/news/all",
-            params=params,
-            timeout=30,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
+        r = requests.get("https://api.marketaux.com/v1/news/all", params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         rows = []
         for x in r.json().get("data", []):
-            tks = [
-                e.get("symbol", "")
-                for e in x.get("entities", [])
-                if e.get("symbol", "").isalpha()
-            ]
-            rows.append(
-                {
-                    "time": x.get("published_at"),
-                    "title": x.get("title"),
-                    "source": x.get("source"),
-                    "url": x.get("url"),
-                    "sentiment": x.get("sentiment"),
-                    "tickers": ",".join(tks[:5]),
-                }
-            )
+            tks = [e.get("symbol", "") for e in x.get("entities", []) if e.get("symbol", "").isalpha()]
+            rows.append({
+                "time": x.get("published_at"),
+                "title": x.get("title"),
+                "source": x.get("source"),
+                "url": x.get("url"),
+                "sentiment": x.get("sentiment"),
+                "tickers": ",".join(tks[:5]),
+            })
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -219,29 +176,22 @@ def get_economic_calendar():
         return pd.DataFrame()
     params = {"c": TRADING_ECONOMICS_KEY, "f": "json"}
     try:
-        r = requests.get(
-            "https://api.tradingeconomics.com/calendar",
-            params=params,
-            timeout=30,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
+        r = requests.get("https://api.tradingeconomics.com/calendar", params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         rows = []
         for x in r.json():
             c = str(x.get("Country", "")).lower()
             if c not in ("united states", "us", "usa"):
                 continue
-            rows.append(
-                {
-                    "time": x.get("Date"),
-                    "country": x.get("Country"),
-                    "event": x.get("Event"),
-                    "importance": x.get("Importance"),
-                    "actual": x.get("Actual"),
-                    "forecast": x.get("Forecast"),
-                    "previous": x.get("Previous"),
-                }
-            )
+            rows.append({
+                "time": x.get("Date"),
+                "country": x.get("Country"),
+                "event": x.get("Event"),
+                "importance": x.get("Importance"),
+                "actual": x.get("Actual"),
+                "forecast": x.get("Forecast"),
+                "previous": x.get("Previous"),
+            })
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -250,11 +200,7 @@ def get_economic_calendar():
 @st.cache_data(ttl=300)
 def get_yahoo_unusual_volume():
     try:
-        html = requests.get(
-            "https://finance.yahoo.com/research-hub/screener/unusual-volume-stocks/",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=30,
-        ).text
+        html = requests.get("https://finance.yahoo.com/research-hub/screener/unusual-volume-stocks/", headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
         df = pd.read_html(html)[0]
         if "Symbol" in df.columns:
             df = df[df["Symbol"].astype(str).str.isalpha()]
@@ -266,11 +212,7 @@ def get_yahoo_unusual_volume():
 @st.cache_data(ttl=300)
 def get_finviz_premarket():
     try:
-        html = requests.get(
-            "https://finviz.com/screener.ashx?v=111&f=exch_nasd,idx_sp500",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=30,
-        ).text
+        html = requests.get("https://finviz.com/screener.ashx?v=111&f=exch_nasd,idx_sp500", headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
         tables = pd.read_html(html)
         return tables[0] if tables else pd.DataFrame()
     except Exception:
@@ -317,8 +259,12 @@ if premarket.empty:
 if unusual.empty:
     st.warning("No unusual-volume data returned.")
 
+def render_list(title, rows):
+    st.markdown(f'<div class="section-card"><div class="topic">{title}</div></div>', unsafe_allow_html=True)
+    return
+
 st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">US economic calendar</div>', unsafe_allow_html=True)
+render_list("US economic calendar", econ)
 if not econ.empty:
     st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
     for _, r in econ.head(6).iterrows():
@@ -329,26 +275,7 @@ else:
     st.info("Add a Trading Economics API key to show today's calendar.")
 
 st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">Upgrades / downgrades</div>', unsafe_allow_html=True)
-if not df.empty:
-    analyst = df[df["title"].str.contains("upgrade|downgrade|initiated|price target|rating", case=False, na=False)].copy().head(12)
-    if not analyst.empty:
-        st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
-        for _, r in analyst.iterrows():
-            thesis = r.get("thesis", "Neutral")
-            imp = r.get("importance", "Moderate")
-            sym = str(r.get("tickers", "")).split(",")[0] if r.get("tickers") else ""
-            sector = get_company_label(sym)
-            tcls = "bullish" if thesis == "Bullish" else "bearish" if thesis == "Bearish" else "neutral"
-            icls = "notable" if imp == "Notable" else "moderate"
-            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>', unsafe_allow_html=True)
-    else:
-        st.info("No analyst-action headlines found in the current feed.")
-else:
-    st.info("Connect a news feed to populate analyst actions.")
-
-st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">Top catalysts</div>', unsafe_allow_html=True)
+render_list("Top catalysts", df)
 if not df.empty:
     st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
     for _, r in df.head(20).iterrows():
@@ -365,16 +292,16 @@ else:
 st.markdown("---")
 cols = st.columns(2)
 with cols[0]:
-    st.markdown('<div class="section-card"><div class="topic">Pre-market movers</div></div>', unsafe_allow_html=True)
+    render_list("Pre-market movers", premarket)
     if not premarket.empty:
         for _, r in premarket.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
             row_txt = " - ".join(str(x) for x in r.values)
             st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">US</div><div class="thesis">{badge("PRE", "neutral")}</div><div class="importance">{badge("MOVE", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>', unsafe_allow_html=True)
     else:
-        st.info("No pre-market table loaded yet.")
+        st.info("No pre-market data returned.")
 with cols[1]:
-    st.markdown('<div class="section-card"><div class="topic">High volume / unusual volume</div></div>', unsafe_allow_html=True)
+    render_list("High volume / unusual volume", unusual)
     if not unusual.empty:
         for _, r in unusual.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
