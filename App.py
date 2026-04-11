@@ -45,21 +45,13 @@ a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 )
 
 st.title("DAILY MARKET BRIEF")
-st.caption("US stocks only - catalysts, analyst moves, pre-market, and macro events")
+st.caption("US stocks only - catalysts, analyst moves, and macro events")
 
 
 def classify_thesis(title: str) -> str:
     t = (title or "").lower()
-    bullish = [
-        "beats", "beat", "raises", "raised", "upgrade", "upgrades", "bullish", "surge",
-        "record", "buy", "strong", "top pick", "approval", "approved", "expands", "growth",
-        "overweight", "outperform", "positive"
-    ]
-    bearish = [
-        "misses", "miss", "cuts", "cut", "downgrade", "downgrades", "bearish", "plunge",
-        "weak", "warning", "sell", "lawsuit", "investigation", "recall", "slumps", "slump",
-        "probe", "underweight", "underperform", "negative"
-    ]
+    bullish = ["beats", "beat", "raises", "raised", "upgrade", "upgrades", "bullish", "surge", "record", "buy", "strong", "top pick", "approval", "approved", "expands", "growth", "overweight", "outperform", "positive"]
+    bearish = ["misses", "miss", "cuts", "cut", "downgrade", "downgrades", "bearish", "plunge", "weak", "warning", "sell", "lawsuit", "investigation", "recall", "slumps", "slump", "probe", "underweight", "underperform", "negative"]
     if any(k in t for k in bullish):
         return "Bullish"
     if any(k in t for k in bearish):
@@ -70,11 +62,7 @@ def classify_thesis(title: str) -> str:
 def classify_importance(row) -> str:
     txt = " ".join(str(row.get(c, "")) for c in ["title", "sentiment", "tickers"]).lower()
     score = 0
-    for k in [
-        "earnings", "guidance", "fda", "sec", "merger", "acquisition", "upgrade",
-        "downgrade", "rates", "inflation", "jobs", "cpi", "fed", "split", "ipo",
-        "approval", "bankruptcy", "lawsuit", "deal", "conference", "meeting minutes"
-    ]:
+    for k in ["earnings", "guidance", "fda", "sec", "merger", "acquisition", "upgrade", "downgrade", "rates", "inflation", "jobs", "cpi", "fed", "split", "ipo", "approval", "bankruptcy", "lawsuit", "deal", "conference", "meeting minutes"]:
         if k in txt:
             score += 1
     return "Notable" if score >= 2 else "Moderate"
@@ -82,10 +70,7 @@ def classify_importance(row) -> str:
 
 def get_company_label(ticker):
     sec = {
-        "AA": "Basic Materials",
         "AAPL": "Technology",
-        "ABNB": "Communication",
-        "ABBV": "Healthcare",
         "AMZN": "Consumer Disc",
         "AMD": "Technology",
         "META": "Communication",
@@ -119,16 +104,12 @@ def safe_cell(v):
 
 def yahoo_link(ticker):
     ticker = str(ticker).strip()
-    if not ticker:
-        return ""
-    return f"https://finance.yahoo.com/quote/{ticker}"
+    return f"https://finance.yahoo.com/quote/{ticker}" if ticker else ""
 
 
 def sym_html(ticker):
     t = str(ticker).strip()
-    if not t:
-        return ""
-    return f'<a class="yf" href="{yahoo_link(t)}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>'
+    return f'<a class="yf" href="{yahoo_link(t)}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>' if t else ""
 
 
 @st.cache_data(ttl=300)
@@ -204,30 +185,9 @@ def get_economic_calendar():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=300)
-def get_yahoo_unusual_volume():
-    try:
-        html = requests.get("https://finance.yahoo.com/research-hub/screener/unusual-volume-stocks/", headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
-        return pd.read_html(html)[0]
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def get_finviz_premarket():
-    try:
-        html = requests.get("https://finviz.com/screener.ashx?v=111&f=exch_nasd,idx_sp500", headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
-        tables = pd.read_html(html)
-        return tables[0] if tables else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-
 news = get_marketaux_news()
 alpha = get_alpha_news()
 econ = get_economic_calendar()
-unusual = get_yahoo_unusual_volume()
-premarket = get_finviz_premarket()
 
 df = news if not news.empty else alpha
 if not df.empty:
@@ -239,8 +199,6 @@ if not df.empty:
 last_update = datetime.now(PST).strftime("%-I:%M %p")
 st.markdown(f'<div class="small-muted">{len(df)} catalyst articles found - {len(econ)} calendar items - Last updated: {last_update}</div>', unsafe_allow_html=True)
 
-st.write({"alpha_rows": len(alpha), "marketaux_rows": len(news), "econ_rows": len(econ), "premarket_rows": len(premarket), "unusual_rows": len(unusual)})
-
 c1, c2, c3 = st.columns(3)
 c1.metric("Catalysts", len(df))
 c2.metric("Economic events", len(econ))
@@ -251,11 +209,7 @@ if alpha.empty:
 if news.empty:
     st.warning("Marketaux returned no rows.")
 if econ.empty:
-    st.warning("Economic calendar returned no US rows.")
-if premarket.empty:
-    st.warning("No pre-market data returned.")
-if unusual.empty:
-    st.warning("No unusual-volume data returned.")
+    st.warning("Economic calendar returned no rows.")
 
 st.markdown("---")
 st.markdown('<div class="section-card"><div class="topic">Economic calendar</div>', unsafe_allow_html=True)
@@ -263,13 +217,11 @@ if not econ.empty:
     st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
     for _, r in econ.head(5).iterrows():
         imp = str(r.get("importance", "")).upper()
-        imp_cls = "high" if "high" in imp else "medium" if "medium" in imp else "low"
+        imp_cls = "high" if "HIGH" in imp else "medium" if "MEDIUM" in imp else "low"
         st.markdown(
             f'<div class="list-row"><div class="sym">{fmt_time(r.get("time"))}</div><div class="sector">US</div><div class="thesis">{badge(imp if imp else "EVENT", imp_cls)}</div><div class="importance">{badge("US", "neutral")}</div><div class="headline">{safe_cell(r.get("event", ""))}</div></div>',
             unsafe_allow_html=True,
         )
-else:
-    st.info("Add a Trading Economics API key to show today's calendar.")
 
 st.markdown("---")
 st.markdown('<div class="section-card"><div class="topic">Top catalysts</div>', unsafe_allow_html=True)
@@ -287,35 +239,6 @@ if not df.empty:
             unsafe_allow_html=True,
         )
 else:
-    st.info("Add a finance news API key to show catalysts.")
+    st.info("No catalyst data loaded yet.")
 
-st.markdown("---")
-cols = st.columns(2)
-
-with cols[0]:
-    st.markdown('<div class="section-card"><div class="topic">Pre-market movers</div></div>', unsafe_allow_html=True)
-    if not premarket.empty and "Symbol" in premarket.columns:
-        for _, r in premarket.head(10).iterrows():
-            sym = str(r.get("Symbol", ""))
-            row_txt = " - ".join(str(x) for x in r.values)
-            st.markdown(
-                f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">US Stock</div><div class="thesis">{badge("PRE", "neutral")}</div><div class="importance">{badge("MOVE", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        st.info("No pre-market table loaded yet.")
-
-with cols[1]:
-    st.markdown('<div class="section-card"><div class="topic">High volume / unusual volume</div></div>', unsafe_allow_html=True)
-    if not unusual.empty and "Symbol" in unusual.columns:
-        for _, r in unusual.head(10).iterrows():
-            sym = str(r.get("Symbol", ""))
-            row_txt = " - ".join(str(x) for x in r.values)
-            st.markdown(
-                f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">US Stock</div><div class="thesis">{badge("VOL", "neutral")}</div><div class="importance">{badge("WATCH", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        st.info("No unusual-volume table loaded yet.")
-
-st.markdown('<div class="small-muted">US stocks only. Black base, green bullish, red bearish. Compact list view for fast scanning.</div>', unsafe_allow_html=True)
+st.markdown('<div class="small-muted">Yahoo links stay clickable, but the app no longer depends on scraping Yahoo or Finviz.</div>', unsafe_allow_html=True)
