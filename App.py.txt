@@ -1,0 +1,187 @@
+import os
+from datetime import datetime
+import pandas as pd
+import requests
+import streamlit as st
+
+st.set_page_config(page_title='Free Market Dashboard', layout='wide')
+
+ALPHAVANTAGE_KEY = st.secrets.get('ALPHAVANTAGE_KEY', os.getenv('ALPHAVANTAGE_KEY', ''))
+MARKETAUX_KEY = st.secrets.get('MARKETAUX_KEY', os.getenv('MARKETAUX_KEY', ''))
+TRADING_ECONOMICS_KEY = st.secrets.get('TRADING_ECONOMICS_KEY', os.getenv('TRADING_ECONOMICS_KEY', ''))
+
+st.title('Free Market Dashboard')
+st.caption('Top catalysts, upgrades, downgrades, pre-market movers, high volume, unusual volume, and today's economic calendar')
+
+
+def classify_thesis(title: str) -> str:
+    t = (title or '').lower()
+    bullish = ['beats', 'beat', 'raises', 'raised', 'upgrade', 'upgrades', 'bullish', 'surge', 'record', 'buy', 'strong', 'top pick', 'approval', 'approved', 'expands', 'growth']
+    bearish = ['misses', 'miss', 'cuts', 'cut', 'downgrade', 'downgrades', 'bearish', 'plunge', 'weak', 'warning', 'sell', 'lawsuit', 'investigation', 'recall', 'slumps', 'slump', 'probe', 'missed estimates']
+    if any(k in t for k in bullish):
+        return 'Bullish'
+    if any(k in t for k in bearish):
+        return 'Bearish'
+    return 'Neutral'
+
+
+def classify_importance(row) -> str:
+    txt = ' '.join(str(row.get(c, '')) for c in ['title', 'sentiment', 'tickers']).lower()
+    score = 0
+    for k in ['earnings', 'guidance', 'fda', 'sec', 'merger', 'acquisition', 'upgrade', 'downgrade', 'rates', 'inflation', 'jobs', 'cpi', 'fed', 'split', 'ipo', 'approval', 'bankruptcy', 'lawsuit', 'deal']:
+        if k in txt:
+            score += 1
+    return 'Notable' if score >= 2 else 'Moderate'
+
+
+def style_thesis(v):
+    if v == 'Bullish':
+        return 'background-color: #dcfce7'
+    if v == 'Bearish':
+        return 'background-color: #fee2e2'
+    return 'background-color: #e5e7eb'
+
+
+def style_importance(v):
+    return 'background-color: #d1fae5' if v == 'Notable' else 'background-color: #fef3c7'
+
+
+@st.cache_data(ttl=300)
+def get_alpha_news():
+    if not ALPHAVANTAGE_KEY:
+        return pd.DataFrame()
+    url = 'https://www.alphavantage.co/query'
+    params = {'function': 'NEWS_SENTIMENT', 'apikey': ALPHAVANTAGE_KEY, 'topics': 'earnings,ipo,m&a,financial_markets,economy', 'limit': 50}
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json().get('feed', [])
+        rows = []
+        for x in data:
+            rows.append({'time': x.get('time_published'), 'title': x.get('title'), 'source': x.get('source'), 'url': x.get('url'), 'sentiment': x.get('overall_sentiment_label'), 'tickers': ','.join([t.get('ticker', '') for t in x.get('ticker_sentiment', [])[:5]])})
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def get_marketaux_news():
+    if not MARKETAUX_KEY:
+        return pd.DataFrame()
+    url = 'https://api.marketaux.com/v1/news/all'
+    params = {'api_token': MARKETAUX_KEY, 'language': 'en', 'limit': 50, 'group_similar': 'true'}
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json().get('data', [])
+        rows = []
+        for x in data:
+            rows.append({'time': x.get('published_at'), 'title': x.get('title'), 'source': x.get('source'), 'url': x.get('url'), 'sentiment': x.get('sentiment'), 'tickers': ','.join([e.get('symbol', '') for e in x.get('entities', [])[:5]])})
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def get_economic_calendar():
+    if not TRADING_ECONOMICS_KEY:
+        return pd.DataFrame()
+    url = 'https://api.tradingeconomics.com/calendar'
+    params = {'c': TRADING_ECONOMICS_KEY, 'f': 'json'}
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        rows = []
+        for x in data:
+            rows.append({'time': x.get('Date'), 'country': x.get('Country'), 'event': x.get('Event'), 'importance': x.get('Importance'), 'actual': x.get('Actual'), 'forecast': x.get('Forecast'), 'previous': x.get('Previous')})
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def get_yahoo_unusual_volume():
+    url = 'https://finance.yahoo.com/research-hub/screener/unusual-volume-stocks/'
+    try:
+        return pd.read_html(url)[0]
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def get_finviz_premarket():
+    url = 'https://finviz.com/screener.ashx?v=111&f=exch_nasd,idx_sp500'
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        html = requests.get(url, headers=headers, timeout=30).text
+        tables = pd.read_html(html)
+        return tables[0] if tables else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+news = get_marketaux_news()
+alpha = get_alpha_news()
+econ = get_economic_calendar()
+unusual = get_yahoo_unusual_volume()
+premarket = get_finviz_premarket()
+
+c1, c2, c3 = st.columns(3)
+c1.metric('Status', 'Live')
+c2.metric('Updated', datetime.now().strftime('%H:%M:%S'))
+c3.metric('Sources', 'Free APIs + public pages')
+
+left, right = st.columns(2)
+
+with left:
+    st.subheader('Top catalysts')
+    df = news if not news.empty else alpha
+    if not df.empty:
+        df = df.copy()
+        df['thesis'] = df['title'].apply(classify_thesis)
+        df['importance'] = df.apply(classify_importance, axis=1)
+        view = df[['time', 'title', 'source', 'sentiment', 'tickers', 'thesis', 'importance', 'url']].head(15)
+        st.dataframe(view.style.applymap(style_thesis, subset=['thesis']).applymap(style_importance, subset=['importance']), use_container_width=True)
+    else:
+        st.info('Add a finance news API key to show catalysts.')
+
+    st.subheader('Catalysts')
+    if not df.empty:
+        st.dataframe(df[['time', 'title', 'source', 'sentiment', 'tickers', 'url']].head(15), use_container_width=True)
+    else:
+        st.info('Add a finance news API key to show catalysts.')
+
+    st.subheader('Upgrades and downgrades')
+    if not df.empty:
+        analyst = df[df['title'].str.contains('upgrade|downgrade|initiated|price target|rating', case=False, na=False)].copy()
+        if not analyst.empty:
+            analyst['thesis'] = analyst['title'].apply(classify_thesis)
+            analyst['importance'] = analyst.apply(classify_importance, axis=1)
+            st.dataframe(analyst[['time', 'title', 'source', 'tickers', 'thesis', 'importance', 'url']].head(15).style.applymap(style_thesis, subset=['thesis']).applymap(style_importance, subset=['importance']), use_container_width=True)
+        else:
+            st.info('No analyst-action headlines found in the current feed.')
+    else:
+        st.info('Connect a news feed to populate analyst actions.')
+
+with right:
+    st.subheader('Pre-market movers')
+    if not premarket.empty:
+        st.dataframe(premarket.head(15), use_container_width=True)
+    else:
+        st.info('No pre-market table loaded yet.')
+
+    st.subheader('High volume and unusual volume')
+    if not unusual.empty:
+        st.dataframe(unusual.head(15), use_container_width=True)
+    else:
+        st.info('No unusual-volume table loaded yet.')
+
+    st.subheader('Economic calendar')
+    if not econ.empty:
+        st.dataframe(econ.head(20), use_container_width=True)
+    else:
+        st.info("Add a Trading Economics API key to show today's calendar.")
+
+st.subheader('Run locally')
+st.code('pip install streamlit pandas requests lxml html5lib\nstreamlit run app.py')
