@@ -45,7 +45,7 @@ a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 )
 
 st.title("DAILY MARKET BRIEF")
-st.caption("Economic calendar first - merged news feed - dark compact layout")
+st.caption("Economic calendar first - merged news feed - cleaner opportunity layout")
 
 
 def badge(text, cls):
@@ -284,3 +284,33 @@ render_static_market("Unusual volume", ["AMD", "BA", "COST", "CAT", "GE", "NFLX"
 render_static_market("Catalysts", ["JPM", "XOM", "LLY", "UNH", "ORCL", "CRM"], "CAT")
 
 st.markdown('<div class="small-muted">Yahoo links are clickable. Sectors are heuristic because this version does not use Finnhub.</div>', unsafe_allow_html=True)
+
+st.markdown("## Opportunity scan")
+cols = st.columns(3)
+with cols[0]:
+    st.markdown('<div class="section-card"><div class="topic">Best catalysts</div>', unsafe_allow_html=True)
+    if not combined_news.empty:
+        cat = combined_news.copy()
+        cat = cat[cat["title"].str.contains("earnings|guidance|deal|acquisition|merger|fda|sec|lawsuit|downgrade|upgrade|ipo", case=False, na=False)].head(6)
+        for _, r in cat.iterrows():
+            st.markdown(
+                f'<div class="list-row"><div class="sym">{sym_html(str(r.get("tickers","")).split(",")[0].strip())}</div><div class="sector">{safe_cell(sector_guess(str(r.get("tickers","")).split(",")[0].strip(), r.get("title","")))}</div><div class="thesis">{badge(thesis_from_text(r.get("title","")).upper(), "bullish" if thesis_from_text(r.get("title",""))=="Bullish" else "bearish" if thesis_from_text(r.get("title",""))=="Bearish" else "neutral")}</div><div class="importance">{badge(importance_from_text(r.get("title","")).upper(), "notable" if importance_from_text(r.get("title",""))=="Notable" else "moderate")}</div><div class="headline">{safe_cell(r.get("title",""))}</div></div>',
+                unsafe_allow_html=True,
+            )
+    st.markdown('</div>', unsafe_allow_html=True)
+with cols[1]:
+    st.markdown('<div class="section-card"><div class="topic">Upgrades / downgrades</div>', unsafe_allow_html=True)
+    for sym in ["AAPL","MSFT","NVDA","AMZN","TSLA","JPM"]:
+        st.markdown(
+            f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector_guess(sym))}</div><div class="thesis">{badge("RATING", "neutral")}</div><div class="importance">{badge("WATCH", "moderate")}</div><div class="headline">{safe_cell(sym)} analyst activity</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
+with cols[2]:
+    st.markdown('<div class="section-card"><div class="topic">Potential plays</div>', unsafe_allow_html=True)
+    for sym in ["NVDA","LLY","AMD","BA","ORCL","CRM"]:
+        st.markdown(
+            f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector_guess(sym))}</div><div class="thesis">{badge("SETUP", "bullish")}</div><div class="importance">{badge("PLAY", "notable")}</div><div class="headline">{safe_cell(sym)} catalyst + rating watch</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
