@@ -120,27 +120,14 @@ def sym_html(ticker):
 def get_alpha_news():
     if not ALPHAVANTAGE_KEY:
         return pd.DataFrame()
-    params = {
-        "function": "NEWS_SENTIMENT",
-        "apikey": ALPHAVANTAGE_KEY,
-        "topics": "earnings,ipo,m&a,financial_markets,economy",
-        "limit": 50,
-        "tickers": "AAPL,MSFT,AMZN,NVDA,GOOGL,GOOG,META,TSLA,AMD,INTC",
-    }
+    params = {"function": "NEWS_SENTIMENT", "apikey": ALPHAVANTAGE_KEY, "topics": "earnings,ipo,m&a,financial_markets,economy", "limit": 50, "tickers": "AAPL,MSFT,AMZN,NVDA,GOOGL,GOOG,META,TSLA,AMD,INTC"}
     try:
         r = requests.get("https://www.alphavantage.co/query", params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         rows = []
         for x in r.json().get("feed", []):
             tks = [t.get("ticker", "") for t in x.get("ticker_sentiment", []) if t.get("ticker", "").isalpha()]
-            rows.append({
-                "time": x.get("time_published"),
-                "title": x.get("title"),
-                "source": x.get("source"),
-                "url": x.get("url"),
-                "sentiment": x.get("overall_sentiment_label"),
-                "tickers": ",".join(tks[:5]),
-            })
+            rows.append({"time": x.get("time_published"), "title": x.get("title"), "source": x.get("source"), "url": x.get("url"), "sentiment": x.get("overall_sentiment_label"), "tickers": ",".join(tks[:5])})
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -157,14 +144,7 @@ def get_marketaux_news():
         rows = []
         for x in r.json().get("data", []):
             tks = [e.get("symbol", "") for e in x.get("entities", []) if e.get("symbol", "").isalpha()]
-            rows.append({
-                "time": x.get("published_at"),
-                "title": x.get("title"),
-                "source": x.get("source"),
-                "url": x.get("url"),
-                "sentiment": x.get("sentiment"),
-                "tickers": ",".join(tks[:5]),
-            })
+            rows.append({"time": x.get("published_at"), "title": x.get("title"), "source": x.get("source"), "url": x.get("url"), "sentiment": x.get("sentiment"), "tickers": ",".join(tks[:5])})
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -183,15 +163,7 @@ def get_economic_calendar():
             c = str(x.get("Country", "")).lower()
             if c not in ("united states", "us", "usa"):
                 continue
-            rows.append({
-                "time": x.get("Date"),
-                "country": x.get("Country"),
-                "event": x.get("Event"),
-                "importance": x.get("Importance"),
-                "actual": x.get("Actual"),
-                "forecast": x.get("Forecast"),
-                "previous": x.get("Previous"),
-            })
+            rows.append({"time": x.get("Date"), "country": x.get("Country"), "event": x.get("Event"), "importance": x.get("Importance"), "actual": x.get("Actual"), "forecast": x.get("Forecast"), "previous": x.get("Previous")})
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
@@ -235,13 +207,7 @@ if not df.empty:
 last_update = datetime.now(PST).strftime("%-I:%M %p")
 st.markdown(f'<div class="small-muted">{len(df)} catalyst articles found - {len(econ)} US calendar items - Last updated: {last_update}</div>', unsafe_allow_html=True)
 
-st.write({
-    "alpha_rows": len(alpha),
-    "marketaux_rows": len(news),
-    "econ_rows": len(econ),
-    "premarket_rows": len(premarket),
-    "unusual_rows": len(unusual),
-})
+st.write({"alpha_rows": len(alpha), "marketaux_rows": len(news), "econ_rows": len(econ), "premarket_rows": len(premarket), "unusual_rows": len(unusual)})
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Catalysts", len(df))
@@ -259,12 +225,8 @@ if premarket.empty:
 if unusual.empty:
     st.warning("No unusual-volume data returned.")
 
-def render_list(title, rows):
-    st.markdown(f'<div class="section-card"><div class="topic">{title}</div></div>', unsafe_allow_html=True)
-    return
-
 st.markdown("---")
-render_list("US economic calendar", econ)
+st.markdown('<div class="section-card"><div class="topic">US economic calendar</div>', unsafe_allow_html=True)
 if not econ.empty:
     st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
     for _, r in econ.head(6).iterrows():
@@ -275,7 +237,7 @@ else:
     st.info("Add a Trading Economics API key to show today's calendar.")
 
 st.markdown("---")
-render_list("Top catalysts", df)
+st.markdown('<div class="section-card"><div class="topic">Top catalysts</div>', unsafe_allow_html=True)
 if not df.empty:
     st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
     for _, r in df.head(20).iterrows():
@@ -292,7 +254,7 @@ else:
 st.markdown("---")
 cols = st.columns(2)
 with cols[0]:
-    render_list("Pre-market movers", premarket)
+    st.markdown('<div class="section-card"><div class="topic">Pre-market movers</div></div>', unsafe_allow_html=True)
     if not premarket.empty:
         for _, r in premarket.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
@@ -301,7 +263,7 @@ with cols[0]:
     else:
         st.info("No pre-market data returned.")
 with cols[1]:
-    render_list("High volume / unusual volume", unusual)
+    st.markdown('<div class="section-card"><div class="topic">High volume / unusual volume</div></div>', unsafe_allow_html=True)
     if not unusual.empty:
         for _, r in unusual.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
