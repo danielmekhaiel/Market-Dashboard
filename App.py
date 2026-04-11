@@ -51,6 +51,66 @@ st.markdown(CSS, unsafe_allow_html=True)
 now_txt = datetime.now(PST).strftime("%b %-d, %-I:%M %p PST")
 st.markdown(f"""<div class="topbar"><div><div class="brand">MARKET BRIEF</div><div class="subtle">Economic calendar | catalysts | analyst actions | play scan</div></div><div style="text-align:right;"><div class="subtle">Last updated</div><div style="font-weight:800;">{now_txt}</div></div></div>""", unsafe_allow_html=True)
 
+def fetch_marketaux(symbols):
+    if not MARKETAUX_KEY:
+        return []
+    url = "https://api.marketaux.com/v1/news/all"
+    params = {
+        "api_token": MARKETAUX_KEY,
+        "symbols": ",".join(symbols),
+        "filter_entities": "true",
+        "language": "en",
+        "limit": 10,
+    }
+    r = requests.get(url, params=params, timeout=15)
+    data = r.json().get("data", []) if r.ok else []
+    items = []
+    for a in data:
+        items.append({
+            "symbol": (a.get("entities") or [{}])[0].get("symbol", symbols[0]),
+            "source": (a.get("source") or {}).get("name", "Marketaux"),
+            "thesis": thesis_from_text((a.get("title") or "") + " " + (a.get("description") or "")),
+            "type": "News",
+            "headline": a.get("title") or a.get("description") or "Market news",
+        })
+    return items
+
+def fetch_te_calendar():
+    if not TRADING_ECONOMICS_KEY:
+        return []
+    url = "https://api.tradingeconomics.com/calendar"
+    params = {"c": TRADING_ECONOMICS_KEY}
+    r = requests.get(url, params=params, timeout=15)
+    data = r.json() if r.ok else []
+    items = []
+    for e in data[:8]:
+        items.append({
+            "symbol": e.get("Event") or e.get("Country") or "Macro",
+            "source": e.get("Country") or "Trading Economics",
+            "thesis": "Neutral",
+            "type": "Calendar",
+            "headline": e.get("Event") or e.get("Category") or "Economic event",
+        })
+    return items
+
+def fetch_alpha_earnings(symbols):
+    if not ALPHAVANTAGE_KEY:
+        return []
+    items = []
+    for sym in symbols[:6]:
+        url = "https://www.alphavantage.co/query"
+        params = {"function": "EARNINGS_CALENDAR", "horizon": "3month", "symbol": sym, "apikey": ALPHAVANTAGE_KEY}
+        r = requests.get(url, params=params, timeout=20)
+        if r.ok and r.text.strip():
+            items.append({
+                "symbol": sym,
+                "source": "Alpha Vantage",
+                "thesis": "Neutral",
+                "type": "Earnings",
+                "headline": f"Earnings calendar data available for {sym}",
+            })
+    return items
+
 def safe_cell(v):
     s = "" if v is None else str(v)
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -82,8 +142,9 @@ def render_news(items, title):
     st.markdown(endcard(), unsafe_allow_html=True)
 
 universe_df = pd.DataFrame({"symbol":["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"],"sector":[sector_guess(s) for s in ["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"]]})
-calendar_df = pd.DataFrame({"symbol":["FOMC","CPI","PPI","NFP"],"source":["Macro","Macro","Macro","Macro"],"thesis":["Neutral","Neutral","Neutral","Neutral"],"type":["Calendar","Calendar","Calendar","Calendar"],"headline":["Fed-related watch item","Inflation release","Producer prices","Jobs report"]})
-combined_news = [
+te_items = fetch_te_calendar()
+calendar_df = pd.DataFrame(te_items) if te_items else pd.DataFrame({"symbol":["FOMC","CPI","PPI","NFP"],"source":["Macro","Macro","Macro","Macro"],"thesis":["Neutral","Neutral","Neutral","Neutral"],"type":["Calendar","Calendar","Calendar","Calendar"],"headline":["Fed-related watch item","Inflation release","Producer prices","Jobs report"]})
+combined_news = fetch_marketaux(["NVDA","AAPL","MSFT","TSLA","AMZN","LLY"]) or [
     {"symbol":"NVDA","source":"Earnings","thesis":thesis_from_text("strong guidance"),"type":"Catalyst","headline":"AI demand and guidance remain the key driver."},
     {"symbol":"LLY","source":"Health","thesis":thesis_from_text("approval"),"type":"Catalyst","headline":"Pipeline and approval headlines keep it on watch."},
     {"symbol":"AAPL","source":"Product","thesis":thesis_from_text("upgrade"),"type":"Analyst","headline":"Rating and product cycle comments can move the stock."},
@@ -105,7 +166,7 @@ def render_opportunity_panel(title, symbols, style, note):
 left, right = st.columns([1.5, 1], gap="large")
 with left:
     render_calendar(calendar_df)
-    render_news(combined_news, "Catalyst headlines")
+    render_news(combined_news + fetch_alpha_earnings(["AAPL","MSFT","NVDA","TSLA","AMZN","LLY"]), "Catalyst headlines")
     st.markdown(card("Analyst actions"), unsafe_allow_html=True)
     for sym in ["AAPL","MSFT","NVDA","AMZN","TSLA","JPM","LLY","XOM"]:
         st.markdown(f'<div class="row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector_guess(sym))}</div><div>{badge("RATING", "neutral")}</div><div>{badge("WATCH", "low")}</div><div class="headline">{safe_cell(sym)} upgrade/downgrade watch</div></div>', unsafe_allow_html=True)
