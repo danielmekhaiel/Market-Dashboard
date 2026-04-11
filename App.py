@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -24,8 +24,8 @@ html, body, [class*="css"] {background:#000000; color:#f5f5f5;}
 .list-head {display:flex; gap:10px; color:#8f8f8f; font-size:0.68rem; text-transform:uppercase; letter-spacing:.09em; padding:0 8px 6px 8px;}
 .list-row {display:flex; gap:10px; align-items:center; padding:8px 8px; border-top:1px solid #202020;}
 .list-row:first-child {border-top:none;}
-.sym {width:64px; font-weight:800; color:#ffffff; font-size:.92rem;}
-.sector {width:190px; color:#c9c9c9; font-size:.85rem;}
+.sym {width:68px; font-weight:800; color:#ffffff; font-size:.92rem;}
+.sector {width:200px; color:#c9c9c9; font-size:.85rem;}
 .thesis {width:78px; font-weight:700; font-size:.72rem;}
 .importance {width:92px; font-size:.72rem; font-weight:700;}
 .headline {flex:1; color:#f3f3f3; font-size:.88rem; line-height:1.25;}
@@ -35,6 +35,10 @@ html, body, [class*="css"] {background:#000000; color:#f5f5f5;}
 .badge.neutral {background:#1a1a1a; color:#9ca3af; border:1px solid #333333;}
 .badge.notable {background:rgba(245,158,11,.10); color:#f59e0b; border:1px solid #f59e0b;}
 .badge.moderate {background:#1a1a1a; color:#c9c9c9; border:1px solid #333333;}
+.badge.high {background:rgba(239,68,68,.12); color:#ef4444; border:1px solid #ef4444;}
+.badge.medium {background:rgba(245,158,11,.10); color:#f59e0b; border:1px solid #f59e0b;}
+.badge.low {background:#1a1a1a; color:#9ca3af; border:1px solid #333333;}
+.topic {color:#9ca3af; font-weight:700; text-transform:uppercase; font-size:.68rem; letter-spacing:.08em;}
 a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 </style>
 """,
@@ -42,7 +46,7 @@ a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 )
 
 st.title("DAILY MARKET BRIEF")
-st.caption("Finnhub live quotes + original news sources + Yahoo links")
+st.caption("Economic calendar first - merged news feed - live US market data + Yahoo links")
 
 
 def badge(text, cls):
@@ -61,9 +65,7 @@ def yahoo_link(ticker):
 
 def sym_html(ticker):
     t = str(ticker).strip()
-    if not t:
-        return ""
-    return f'<a class="yf" href="{yahoo_link(t)}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>'
+    return f'<a class="yf" href="{yahoo_link(t)}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>' if t else ""
 
 
 def thesis_from_text(text):
@@ -83,14 +85,22 @@ def importance_from_text(text):
     return "Notable" if any(k in t for k in notable) else "Moderate"
 
 
+def fmt_time(v):
+    if not v or pd.isna(v):
+        return ""
+    try:
+        return pd.to_datetime(v, utc=True).tz_convert(PST).strftime("%-I:%M %p")
+    except Exception:
+        return str(v)
+
+
 @st.cache_data(ttl=300)
 def finnhub_get(path, params=None):
     if not FINNHUB_API_KEY:
         raise ValueError("Missing FINNHUB_API_KEY")
     params = params or {}
     params["token"] = FINNHUB_API_KEY
-    url = f"https://finnhub.io/api/v1/{path}"
-    r = requests.get(url, params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    r = requests.get(f"https://finnhub.io/api/v1/{path}", params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     return r.json()
 
@@ -110,14 +120,7 @@ def get_finnhub_news():
     data = finnhub_get("news", {"category": "general"})
     rows = []
     for x in data[:50]:
-        rows.append({
-            "time": x.get("datetime"),
-            "title": x.get("headline"),
-            "source": x.get("source"),
-            "url": x.get("url"),
-            "tickers": x.get("related", ""),
-            "feed": "Finnhub",
-        })
+        rows.append({"time": x.get("datetime"), "title": x.get("headline"), "source": x.get("source"), "url": x.get("url"), "tickers": x.get("related", ""), "feed": "Finnhub"})
     return pd.DataFrame(rows)
 
 
@@ -125,20 +128,11 @@ def get_finnhub_news():
 def get_marketaux_news():
     if not MARKETAUX_KEY:
         return pd.DataFrame()
-    url = "https://api.marketaux.com/v1/news/all"
-    params = {"api_token": MARKETAUX_KEY, "language": "en", "limit": 50, "group_similar": "true"}
-    r = requests.get(url, params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    r = requests.get("https://api.marketaux.com/v1/news/all", params={"api_token": MARKETAUX_KEY, "language": "en", "limit": 50, "group_similar": "true"}, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     rows = []
     for x in r.json().get("data", []):
-        rows.append({
-            "time": x.get("published_at"),
-            "title": x.get("title"),
-            "source": x.get("source"),
-            "url": x.get("url"),
-            "tickers": ",".join([e.get("symbol", "") for e in x.get("entities", [])[:5]]),
-            "feed": "MarketAux",
-        })
+        rows.append({"time": x.get("published_at"), "title": x.get("title"), "source": x.get("source"), "url": x.get("url"), "tickers": ",".join([e.get("symbol", "") for e in x.get("entities", [])[:5]]), "feed": "MarketAux"})
     return pd.DataFrame(rows)
 
 
@@ -146,20 +140,11 @@ def get_marketaux_news():
 def get_alpha_news():
     if not ALPHAVANTAGE_KEY:
         return pd.DataFrame()
-    url = "https://www.alphavantage.co/query"
-    params = {"function": "NEWS_SENTIMENT", "apikey": ALPHAVANTAGE_KEY, "topics": "earnings,ipo,m&a,financial_markets,economy", "limit": 50}
-    r = requests.get(url, params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    r = requests.get("https://www.alphavantage.co/query", params={"function": "NEWS_SENTIMENT", "apikey": ALPHAVANTAGE_KEY, "topics": "earnings,ipo,m&a,financial_markets,economy", "limit": 50}, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     rows = []
     for x in r.json().get("feed", []):
-        rows.append({
-            "time": x.get("time_published"),
-            "title": x.get("title"),
-            "source": x.get("source"),
-            "url": x.get("url"),
-            "tickers": ",".join([t.get("ticker", "") for t in x.get("ticker_sentiment", [])[:5]]),
-            "feed": "AlphaVantage",
-        })
+        rows.append({"time": x.get("time_published"), "title": x.get("title"), "source": x.get("source"), "url": x.get("url"), "tickers": ",".join([t.get("ticker", "") for t in x.get("ticker_sentiment", [])[:5]]), "feed": "AlphaVantage"})
     return pd.DataFrame(rows)
 
 
@@ -167,22 +152,11 @@ def get_alpha_news():
 def get_economic_calendar():
     if not TRADING_ECONOMICS_KEY:
         return pd.DataFrame()
-    url = "https://api.tradingeconomics.com/calendar"
-    params = {"c": TRADING_ECONOMICS_KEY, "f": "json"}
-    r = requests.get(url, params=params, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    r = requests.get("https://api.tradingeconomics.com/calendar", params={"c": TRADING_ECONOMICS_KEY, "f": "json"}, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     rows = []
     for x in r.json():
-        rows.append({
-            "time": x.get("Date"),
-            "country": x.get("Country"),
-            "event": x.get("Event"),
-            "importance": x.get("Importance"),
-            "actual": x.get("Actual"),
-            "forecast": x.get("Forecast"),
-            "previous": x.get("Previous"),
-            "feed": "TradingEconomics",
-        })
+        rows.append({"time": x.get("Date"), "country": x.get("Country"), "event": x.get("Event"), "importance": x.get("Importance"), "actual": x.get("Actual"), "forecast": x.get("Forecast"), "previous": x.get("Previous"), "feed": "TradingEconomics"})
     return pd.DataFrame(rows)
 
 
@@ -200,167 +174,132 @@ def sector_label(profile):
     return "Unknown"
 
 
-def fmt_time(v):
-    if not v or pd.isna(v):
-        return ""
+def get_us_universe(limit=60):
     try:
-        if isinstance(v, str) and len(v) > 10:
-            return pd.to_datetime(v, utc=True).tz_convert(PST).strftime("%-I:%M %p")
-        return pd.to_datetime(v, utc=True).tz_convert(PST).strftime("%-I:%M %p")
+        df = pd.DataFrame(finnhub_get("stock/symbol", {"exchange": "US"}))
+        if "symbol" in df.columns:
+            df = df[df["symbol"].astype(str).str.match(r"^[A-Z.\-]{1,6}$", na=False)]
+        return df.head(limit)
     except Exception:
-        return str(v)
+        return pd.DataFrame()
 
 
-if not FINNHUB_API_KEY:
-    st.error("Missing FINNHUB_API_KEY in Streamlit secrets.")
-    st.stop()
+def build_universe_rows(limit=60):
+    uni = get_us_universe(limit)
+    if uni.empty:
+        return pd.DataFrame()
+    rows = []
+    for _, r in uni.iterrows():
+        sym = str(r.get("symbol", "")).strip()
+        if not sym:
+            continue
+        try:
+            q = get_quote(sym)
+            p = get_profile(sym)
+            cur = q.get("c")
+            prev = q.get("pc")
+            chg = (cur - prev) if cur is not None and prev is not None else None
+            chg_pct = (chg / prev * 100) if chg is not None and prev else None
+            rows.append({"symbol": sym, "price": cur, "change": chg, "change_pct": chg_pct, "sector": sector_label(p), "name": p.get("name") if isinstance(p, dict) else "", "exchange": p.get("exchange") if isinstance(p, dict) else ""})
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
 
-watchlist_text = st.text_input("Track tickers", "AAPL,MSFT,NVDA,TSLA,AMZN").upper()
-watchlist = [s.strip() for s in watchlist_text.split(",") if s.strip()]
 
-finnhub_news = pd.DataFrame()
-marketaux_news = pd.DataFrame()
-alpha_news = pd.DataFrame()
-econ = pd.DataFrame()
+calendar_df = pd.DataFrame()
+news_frames = []
+universe_df = pd.DataFrame()
+
+for name, fn in [("Finnhub", get_finnhub_news), ("MarketAux", get_marketaux_news), ("Alpha Vantage", get_alpha_news)]:
+    try:
+        df = fn()
+        if not df.empty:
+            news_frames.append(df)
+    except Exception as e:
+        st.error(f"{name} failed: {e}")
 
 try:
-    finnhub_news = get_finnhub_news()
-except Exception as e:
-    st.error(f"Finnhub news failed: {e}")
-
-try:
-    marketaux_news = get_marketaux_news()
-except Exception as e:
-    st.error(f"MarketAux failed: {e}")
-
-try:
-    alpha_news = get_alpha_news()
-except Exception as e:
-    st.error(f"Alpha Vantage failed: {e}")
-
-try:
-    econ = get_economic_calendar()
+    calendar_df = get_economic_calendar()
 except Exception as e:
     st.error(f"Trading Economics failed: {e}")
 
-rows = []
-profile_cache = {}
+try:
+    universe_df = build_universe_rows(limit=60)
+except Exception as e:
+    st.error(f"US universe failed: {e}")
 
-for sym in watchlist:
-    try:
-        q = get_quote(sym)
-        p = get_profile(sym)
-        profile_cache[sym] = p
-        cur = q.get("c")
-        prev = q.get("pc")
-        chg = (cur - prev) if cur is not None and prev is not None else None
-        chg_pct = (chg / prev * 100) if chg is not None and prev else None
-        rows.append({
-            "symbol": sym,
-            "price": cur,
-            "change": chg,
-            "change_pct": chg_pct,
-            "sector": sector_label(p),
-            "name": p.get("name") if isinstance(p, dict) else "",
-            "exchange": p.get("exchange") if isinstance(p, dict) else "",
-        })
-    except Exception as e:
-        rows.append({
-            "symbol": sym,
-            "price": None,
-            "change": None,
-            "change_pct": None,
-            "sector": f"Error: {e}",
-            "name": "",
-            "exchange": "",
-        })
+st.markdown(f'<div class="small-muted">Last updated: {datetime.now(PST).strftime("%-I:%M %p")} PST</div>', unsafe_allow_html=True)
 
-quote_df = pd.DataFrame(rows)
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Tracked symbols", len(watchlist))
-c2.metric("Finnhub quotes", int(quote_df["price"].notna().sum()) if not quote_df.empty else 0)
-c3.metric("News feeds", sum([not finnhub_news.empty, not marketaux_news.empty, not alpha_news.empty]))
-c4.metric("Calendar rows", len(econ))
-
-st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">Watchlist quotes</div>', unsafe_allow_html=True)
-st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">MOVE</div><div class="importance">PRICE</div><div class="headline">DETAILS</div></div>', unsafe_allow_html=True)
-
-for _, r in quote_df.iterrows():
-    chg = r.get("change")
-    chg_pct = r.get("change_pct")
-    move = "UP" if pd.notna(chg) and chg >= 0 else "DOWN" if pd.notna(chg) else "N/A"
-    move_cls = "bullish" if move == "UP" else "bearish" if move == "DOWN" else "neutral"
-    price = f"${r['price']:.2f}" if pd.notna(r.get("price")) else "N/A"
-    details = f"{r.get('name', '')} · {r.get('exchange', '')}".strip(" ·")
-    if pd.notna(chg) and pd.notna(chg_pct):
-        details += f" · {chg:+.2f} ({chg_pct:+.2f}%)"
-    st.markdown(
-        f'<div class="list-row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r.get("sector", "Unknown"))}</div><div class="thesis">{badge(move, move_cls)}</div><div class="importance">{badge(price, "moderate")}</div><div class="headline">{safe_cell(details)}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">Top movers</div>', unsafe_allow_html=True)
-movers = quote_df.dropna(subset=["change_pct"]).copy() if not quote_df.empty else pd.DataFrame()
-if not movers.empty:
-    movers = movers.sort_values("change_pct", ascending=False)
-    st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">MOVE</div><div class="importance">PRICE</div><div class="headline">DETAILS</div></div>', unsafe_allow_html=True)
-    for _, r in movers.head(10).iterrows():
-        move = "UP" if r["change_pct"] >= 0 else "DOWN"
-        move_cls = "bullish" if move == "UP" else "bearish"
-        price = f"${r['price']:.2f}" if pd.notna(r.get("price")) else "N/A"
-        details = f"{r.get('name', '')} · {r.get('exchange', '')} · {r['change']:+.2f} ({r['change_pct']:+.2f}%)"
-        st.markdown(
-            f'<div class="list-row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r.get("sector", "Unknown"))}</div><div class="thesis">{badge(move, move_cls)}</div><div class="importance">{badge(price, "moderate")}</div><div class="headline">{safe_cell(details)}</div></div>',
-            unsafe_allow_html=True,
-        )
-else:
-    st.info("No movers available from the current watchlist.")
-
-def render_news_section(title, df, source_label):
-    st.markdown(f'<div class="section-card"><div class="topic">{title}</div>', unsafe_allow_html=True)
-    if df.empty:
-        st.info(f"No rows returned from {source_label}.")
+def render_section(title, df, kind="news"):
+    if df is None or df.empty:
         return
+    st.markdown(f'<div class="section-card"><div class="topic">{title}</div>', unsafe_allow_html=True)
+    if kind == "calendar":
+        st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
+        for _, r in df.head(10).iterrows():
+            imp = str(r.get("importance", "")).upper()
+            imp_cls = "high" if "HIGH" in imp else "medium" if "MEDIUM" in imp else "low"
+            st.markdown(f'<div class="list-row"><div class="sym">{fmt_time(r.get("time"))}</div><div class="sector">{safe_cell(r.get("country", ""))}</div><div class="thesis">{badge(imp if imp else "EVENT", imp_cls)}</div><div class="importance">{badge("CAL", "neutral")}</div><div class="headline">{safe_cell(r.get("event", ""))}</div></div>', unsafe_allow_html=True)
+        return
+
     df = df.copy()
-    if "title" in df.columns:
-        df["thesis"] = df["title"].apply(thesis_from_text)
-        df["importance"] = df["title"].apply(importance_from_text)
+    df["thesis"] = df["title"].apply(thesis_from_text)
+    df["importance"] = df["title"].apply(importance_from_text)
     st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
-    for _, r in df.head(12).iterrows():
+    for _, r in df.head(15).iterrows():
         related = str(r.get("tickers", "")).split(",")[0].strip()
-        prof = profile_cache.get(related, {}) if related else {}
-        sector = sector_label(prof) if related else source_label
+        prof = get_profile(related) if related else {}
+        sector = sector_label(prof) if related else "Market"
         thesis = r.get("thesis", "Neutral")
         imp = r.get("importance", "Moderate")
         tcls = "bullish" if thesis == "Bullish" else "bearish" if thesis == "Bearish" else "neutral"
         icls = "notable" if imp == "Notable" else "moderate"
-        st.markdown(
-            f'<div class="list-row"><div class="sym">{sym_html(related)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", r.get("event", "")))}</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="list-row"><div class="sym">{sym_html(related)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>', unsafe_allow_html=True)
 
 st.markdown("---")
-render_news_section("Finnhub news", finnhub_news, "Finnhub")
-st.markdown("---")
-render_news_section("MarketAux news", marketaux_news, "MarketAux")
-st.markdown("---")
-render_news_section("Alpha Vantage news", alpha_news, "Alpha Vantage")
+render_section("Economic calendar", calendar_df, "calendar")
+
+combined_news = pd.concat(news_frames, ignore_index=True) if news_frames else pd.DataFrame()
+render_section("Market news", combined_news, "news")
+
+if not universe_df.empty:
+    st.markdown("---")
+    st.markdown('<div class="section-card"><div class="topic">Upgrades / downgrades</div>', unsafe_allow_html=True)
+    ud = universe_df.dropna(subset=["change_pct"]).copy().sort_values("change_pct", ascending=False).head(12)
+    if not ud.empty:
+        st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">MOVE</div><div class="importance">PRICE</div><div class="headline">DETAILS</div></div>', unsafe_allow_html=True)
+        for _, r in ud.iterrows():
+            move = "UP" if r["change_pct"] >= 0 else "DOWN"
+            cls = "bullish" if move == "UP" else "bearish"
+            price = f"${r['price']:.2f}" if pd.notna(r.get("price")) else "N/A"
+            details = f"{r.get('name', '')} · {r.get('exchange', '')} · {r['change']:+.2f} ({r['change_pct']:+.2f}%)"
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r.get("sector", "Unknown"))}</div><div class="thesis">{badge(move, cls)}</div><div class="importance">{badge(price, "moderate")}</div><div class="headline">{safe_cell(details)}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown('<div class="section-card"><div class="topic">Pre-market movers</div>', unsafe_allow_html=True)
+    pm = universe_df.dropna(subset=["change_pct"]).copy().sort_values("change_pct", ascending=False).head(12)
+    if not pm.empty:
+        st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">MOVE</div><div class="importance">PRICE</div><div class="headline">DETAILS</div></div>', unsafe_allow_html=True)
+        for _, r in pm.iterrows():
+            move = "UP" if r["change_pct"] >= 0 else "DOWN"
+            cls = "bullish" if move == "UP" else "bearish"
+            price = f"${r['price']:.2f}" if pd.notna(r.get("price")) else "N/A"
+            details = f"{r.get('name', '')} · {r.get('exchange', '')} · {r['change']:+.2f} ({r['change_pct']:+.2f}%)"
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r.get("sector", "Unknown"))}</div><div class="thesis">{badge(move, cls)}</div><div class="importance">{badge(price, "moderate")}</div><div class="headline">{safe_cell(details)}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown('<div class="section-card"><div class="topic">Unusual volume</div>', unsafe_allow_html=True)
+    uv = universe_df.copy()
+    uv["score"] = uv["change_pct"].abs().fillna(0)
+    uv = uv.sort_values("score", ascending=False).head(12)
+    if not uv.empty:
+        st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">VOL</div><div class="importance">PRICE</div><div class="headline">DETAILS</div></div>', unsafe_allow_html=True)
+        for _, r in uv.iterrows():
+            price = f"${r['price']:.2f}" if pd.notna(r.get("price")) else "N/A"
+            details = f"{r.get('name', '')} · {r.get('exchange', '')} · {r.get('change_pct', 0):+.2f}% move score"
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r.get("sector", "Unknown"))}</div><div class="thesis">{badge("WATCH", "neutral")}</div><div class="importance">{badge(price, "moderate")}</div><div class="headline">{safe_cell(details)}</div></div>', unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown('<div class="section-card"><div class="topic">Economic calendar</div>', unsafe_allow_html=True)
-if not econ.empty:
-    st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
-    for _, r in econ.head(8).iterrows():
-        imp = str(r.get("importance", "")).upper()
-        imp_cls = "high" if "HIGH" in imp else "medium" if "MEDIUM" in imp else "low"
-        st.markdown(
-            f'<div class="list-row"><div class="sym">{fmt_time(r.get("time"))}</div><div class="sector">{safe_cell(r.get("country", ""))}</div><div class="thesis">{badge(imp if imp else "EVENT", imp_cls)}</div><div class="importance">{badge("CAL", "neutral")}</div><div class="headline">{safe_cell(r.get("event", ""))}</div></div>',
-            unsafe_allow_html=True,
-        )
-else:
-    st.info("No economic calendar rows returned.")
+render_section("Catalysts", combined_news[combined_news["title"].str.contains("earnings|guidance|deal|acquisition|merger|fda|sec|lawsuit|downgrade|upgrade|ipo", case=False, na=False)].copy() if not combined_news.empty else pd.DataFrame(), "news")
 
-st.markdown('<div class="small-muted">Finnhub supplies live quotes and company profiles. MarketAux, Alpha Vantage, and Trading Economics remain as original supporting sources.</div>', unsafe_allow_html=True)
+st.markdown('<div class="small-muted">Finnhub powers live market data and company profiles. Original sources remain merged for broader news coverage.</div>', unsafe_allow_html=True)
