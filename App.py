@@ -38,6 +38,7 @@ html, body, [class*="css"] {background:#000000; color:#f5f5f5;}
 .badge.medium {background:rgba(245,158,11,.10); color:#f59e0b; border:1px solid #f59e0b;}
 .badge.low {background:#1a1a1a; color:#9ca3af; border:1px solid #333333;}
 .topic {color:#9ca3af; font-weight:700; text-transform:uppercase; font-size:.72rem; letter-spacing:.08em;}
+a.yf {color:#ffffff; text-decoration:none; font-weight:800;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -114,6 +115,20 @@ def fmt_time(v):
 def safe_cell(v):
     s = "" if v is None else str(v)
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def yahoo_link(ticker):
+    ticker = str(ticker).strip()
+    if not ticker:
+        return ""
+    return f"https://finance.yahoo.com/quote/{ticker}"
+
+
+def sym_html(ticker):
+    t = str(ticker).strip()
+    if not t:
+        return ""
+    return f'<a class="yf" href="{yahoo_link(t)}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>'
 
 
 @st.cache_data(ttl=300)
@@ -273,35 +288,43 @@ if not df.empty:
     df = df.copy()
     df["thesis"] = df["title"].apply(classify_thesis)
     df["importance"] = df.apply(classify_importance, axis=1)
-    df["sector"] = df["tickers"].apply(
-        lambda x: get_company_label(str(x).split(",")[0] if str(x) else "")
-    )
+    df["sector"] = df["tickers"].apply(lambda x: get_company_label(str(x).split(",")[0] if str(x) else ""))
 
 last_update = datetime.now(PST).strftime("%-I:%M %p")
-st.markdown(
-    f'<div class="small-muted">{len(df)} catalyst articles found - {len(econ)} US calendar items - Last updated: {last_update}</div>',
-    unsafe_allow_html=True,
-)
+st.markdown(f'<div class="small-muted">{len(df)} catalyst articles found - {len(econ)} US calendar items - Last updated: {last_update}</div>', unsafe_allow_html=True)
+
+st.write({
+    "alpha_rows": len(alpha),
+    "marketaux_rows": len(news),
+    "econ_rows": len(econ),
+    "premarket_rows": len(premarket),
+    "unusual_rows": len(unusual),
+})
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Catalysts", len(df))
 c2.metric("US events", len(econ))
 c3.metric("Updated", f"{last_update} PST")
 
+if alpha.empty:
+    st.warning("Alpha Vantage returned no rows.")
+if news.empty:
+    st.warning("Marketaux returned no rows.")
+if econ.empty:
+    st.warning("Economic calendar returned no US rows.")
+if premarket.empty:
+    st.warning("No pre-market data returned.")
+if unusual.empty:
+    st.warning("No unusual-volume data returned.")
+
 st.markdown("---")
 st.markdown('<div class="section-card"><div class="topic">US economic calendar</div>', unsafe_allow_html=True)
 if not econ.empty:
-    st.markdown(
-        '<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="list-head"><div class="sym">TIME</div><div class="sector">COUNTRY</div><div class="thesis">PRIORITY</div><div class="importance">TYPE</div><div class="headline">EVENT</div></div>', unsafe_allow_html=True)
     for _, r in econ.head(6).iterrows():
         imp = str(r.get("importance", "")).upper()
         imp_cls = "high" if "high" in imp else "medium" if "medium" in imp else "low"
-        st.markdown(
-            f'<div class="list-row"><div class="sym">{fmt_time(r.get("time"))}</div><div class="sector">US</div><div class="thesis">{badge(imp if imp else "EVENT", imp_cls)}</div><div class="importance">{badge("US", "neutral")}</div><div class="headline">{safe_cell(r.get("event", ""))}</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="list-row"><div class="sym">{fmt_time(r.get("time"))}</div><div class="sector">US</div><div class="thesis">{badge(imp if imp else "EVENT", imp_cls)}</div><div class="importance">{badge("US", "neutral")}</div><div class="headline">{safe_cell(r.get("event", ""))}</div></div>', unsafe_allow_html=True)
 else:
     st.info("Add a Trading Economics API key to show today's calendar.")
 
@@ -310,10 +333,7 @@ st.markdown('<div class="section-card"><div class="topic">Upgrades / downgrades<
 if not df.empty:
     analyst = df[df["title"].str.contains("upgrade|downgrade|initiated|price target|rating", case=False, na=False)].copy().head(12)
     if not analyst.empty:
-        st.markdown(
-            '<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
         for _, r in analyst.iterrows():
             thesis = r.get("thesis", "Neutral")
             imp = r.get("importance", "Moderate")
@@ -321,10 +341,7 @@ if not df.empty:
             sector = get_company_label(sym)
             tcls = "bullish" if thesis == "Bullish" else "bearish" if thesis == "Bearish" else "neutral"
             icls = "notable" if imp == "Notable" else "moderate"
-            st.markdown(
-                f'<div class="list-row"><div class="sym">{safe_cell(sym)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>', unsafe_allow_html=True)
     else:
         st.info("No analyst-action headlines found in the current feed.")
 else:
@@ -333,10 +350,7 @@ else:
 st.markdown("---")
 st.markdown('<div class="section-card"><div class="topic">Top catalysts</div>', unsafe_allow_html=True)
 if not df.empty:
-    st.markdown(
-        '<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="list-head"><div class="sym">SYM</div><div class="sector">SECTOR</div><div class="thesis">THESIS</div><div class="importance">IMPORTANCE</div><div class="headline">HEADLINE</div></div>', unsafe_allow_html=True)
     for _, r in df.head(20).iterrows():
         thesis = r.get("thesis", "Neutral")
         imp = r.get("importance", "Moderate")
@@ -344,10 +358,7 @@ if not df.empty:
         sector = r.get("sector", "US Stock")
         tcls = "bullish" if thesis == "Bullish" else "bearish" if thesis == "Bearish" else "neutral"
         icls = "notable" if imp == "Notable" else "moderate"
-        st.markdown(
-            f'<div class="list-row"><div class="sym">{safe_cell(sym)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector)}</div><div class="thesis">{badge(thesis.upper(), tcls)}</div><div class="importance">{badge(imp.upper(), icls)}</div><div class="headline">{safe_cell(r.get("title", ""))}</div></div>', unsafe_allow_html=True)
 else:
     st.info("Add a finance news API key to show catalysts.")
 
@@ -359,10 +370,7 @@ with cols[0]:
         for _, r in premarket.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
             row_txt = " - ".join(str(x) for x in r.values)
-            st.markdown(
-                f'<div class="list-row"><div class="sym">{safe_cell(sym)}</div><div class="sector">US</div><div class="thesis">{badge("PRE", "neutral")}</div><div class="importance">{badge("MOVE", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">US</div><div class="thesis">{badge("PRE", "neutral")}</div><div class="importance">{badge("MOVE", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>', unsafe_allow_html=True)
     else:
         st.info("No pre-market table loaded yet.")
 with cols[1]:
@@ -371,14 +379,8 @@ with cols[1]:
         for _, r in unusual.head(10).iterrows():
             sym = r.iloc[0] if len(r) > 0 else ""
             row_txt = " - ".join(str(x) for x in r.values)
-            st.markdown(
-                f'<div class="list-row"><div class="sym">{safe_cell(sym)}</div><div class="sector">US</div><div class="thesis">{badge("VOL", "neutral")}</div><div class="importance">{badge("WATCH", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="list-row"><div class="sym">{sym_html(sym)}</div><div class="sector">US</div><div class="thesis">{badge("VOL", "neutral")}</div><div class="importance">{badge("WATCH", "moderate")}</div><div class="headline">{safe_cell(row_txt)}</div></div>', unsafe_allow_html=True)
     else:
-        st.info("No unusual-volume table loaded yet.")
+        st.info("No unusual-volume data returned.")
 
-st.markdown(
-    '<div class="small-muted">US stocks only. Black base, green bullish, red bearish. Compact list view for fast scanning.</div>',
-    unsafe_allow_html=True,
-)
+st.markdown('<div class="small-muted">US stocks only. Black base, green bullish, red bearish. Compact list view for fast scanning.</div>', unsafe_allow_html=True)
