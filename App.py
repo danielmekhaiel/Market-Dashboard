@@ -224,11 +224,12 @@ def fetch_live_yahoo_news(query, limit=8):
 def fetch_finnhub_upgrade_downgrades(limit=12):
     token = os.getenv("FINNHUB_API_KEY", "")
     if not token:
-        return []
+        return [], "missing FINNHUB_API_KEY"
     try:
         url = f"https://finnhub.io/api/v1/stock/upgrade-downgrade?token={token}"
         r = requests.get(url, timeout=20)
-        data = r.json() if r.ok else []
+        js = r.json() if r.content else {}
+        data = js if isinstance(js, list) else js.get("data", [])
         out = []
         for x in data[:limit]:
             out.append({
@@ -239,25 +240,25 @@ def fetch_finnhub_upgrade_downgrades(limit=12):
                 "pt": str(x.get("priceTarget") or x.get("pt") or "—"),
                 "headline": x.get("headline") or f"{x.get('analyst','Analyst')} {x.get('action','')} {x.get('symbol','')}"
             })
-        return out
-    except Exception:
-        return []
+        return out, f"status={r.status_code} items={len(out)} keys={list(js[0].keys()) if isinstance(js, list) and js else list(js.keys()) if isinstance(js, dict) else []}"
+    except Exception as e:
+        return [], f"error={type(e).__name__}: {e}"
 
 def fetch_marketaux_news(limit=10):
     token = os.getenv("MARKETAUX_API_KEY", "")
     if not token:
-        return []
+        return [], "missing MARKETAUX_API_KEY"
     try:
         url = f"https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit={limit}&api_token={token}"
         r = requests.get(url, timeout=20)
-        js = r.json() if r.ok else {}
-        data = js.get("data", [])
+        js = r.json() if r.content else {}
+        data = js.get("data", []) if isinstance(js, dict) else []
         out = []
         for x in data[:limit]:
             out.append({"headline": x.get("title") or x.get("headline") or "", "link": x.get("url") or x.get("link") or ""})
-        return out
-    except Exception:
-        return []
+        return out, f"status={r.status_code} items={len(out)} keys={list(js.keys()) if isinstance(js, dict) else []}"
+    except Exception as e:
+        return [], f"error={type(e).__name__}: {e}"
 
 
 def render_card(title, subtitle, body_fn):
