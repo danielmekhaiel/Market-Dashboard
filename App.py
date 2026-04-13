@@ -52,7 +52,9 @@ with mid:
 with right:
     st.button("Refresh")
 
-watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "COIN", "FDX", "AVGO", "AMZN"]
+default_watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "COIN", "FDX", "AVGO", "AMZN"]
+watchlist_text = st.text_input("Watchlist (comma-separated)", ", ".join(default_watchlist))
+watchlist = [s.strip().upper() for s in watchlist_text.split(",") if s.strip()]
 
 
 def thesis_from_text(text):
@@ -108,8 +110,8 @@ def scanner_rows(symbols):
     return sorted(rows, key=lambda x: x["score"], reverse=True)
 
 
-def fetch_forex_factory_calendar(limit=6):
-    url = "https://www.forexfactory.com/calendar?week=this"
+def fetch_forex_factory_calendar(limit=20):
+    url = "https://www.forexfactory.com/calendar?day=today"
     rows = []
     try:
         r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
@@ -151,7 +153,7 @@ def render_card(title, subtitle, body_fn):
 
 
 def calendar_body():
-    rows = fetch_forex_factory_calendar()
+    rows = fetch_forex_factory_calendar()[:12]
     for e in rows:
         st.markdown(f'<div class="row"><div class="sym">{e["time"]}</div><div class="sector">{e["currency"]}</div><div><span class="badge notable">{e["importance"]}</span></div><div class="headline" style="grid-column: span 2;">{e["event"]}</div></div>', unsafe_allow_html=True)
 
@@ -183,6 +185,7 @@ def scanner_body():
     rows = scanner_rows(watchlist)
     if notable_only:
         rows = [r for r in rows if r["trend"] != "neutral"]
+    rows = rows[:50]
     for s in rows:
         st.markdown(f'<div class="row"><div class="sym">{s["symbol"]}</div><div><span class="badge {s["trend"]}">{s["trend"]}</span></div><div><span class="badge neutral">vol {s["vol_ratio"]:.1f}x</span></div><div class="sym">{s["score"]}</div><div class="headline">Potential play setup for {s["symbol"]} | <a class="yf" href="{yahoo_link(s["symbol"])}" target="_blank">Yahoo articles</a></div></div>', unsafe_allow_html=True)
         news = fetch_yahoo_news(s["symbol"], 1)
