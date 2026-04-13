@@ -7,7 +7,7 @@ import streamlit as st
 import yfinance as yf
 
 PST = ZoneInfo("America/Los_Angeles")
-st.set_page_config(page_title="Daily Catalyst Brief", layout="wide")
+st.set_page_config(page_title="Daily Market Brief", layout="wide")
 
 CSS = """
 <style>
@@ -147,7 +147,7 @@ def scanner_body():
     if notable_only:
         rows = [r for r in rows if r["trend"] != "neutral"]
     for s in rows:
-        st.markdown(f'<div class="row"><div class="sym">{s["symbol"]}</div><div><span class="badge {s["trend"]}">{s["trend"]}</span></div><div><span class="badge neutral">vol {s["vol_ratio"]:.1f}x</span></div><div class="sym">{s["score"]}</div><div class="headline">{s["symbol"]} moves {s["chg"]:.2f}% on the session | <a class="yf" href="{yahoo_link(s["symbol"])}" target="_blank">Yahoo articles</a></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="row"><div class="sym">{s["symbol"]}</div><div><span class="badge {s["trend"]}">{s["trend"]}</span></div><div><span class="badge neutral">vol {s["vol_ratio"]:.1f}x</span></div><div class="sym">{s["score"]}</div><div class="headline">Potential play setup for {s["symbol"]} | <a class="yf" href="{yahoo_link(s["symbol"])}" target="_blank">Yahoo articles</a></div></div>', unsafe_allow_html=True)
         news = fetch_yahoo_news(s["symbol"], 1)
         if news:
             n = news[0]
@@ -157,4 +157,4 @@ def scanner_body():
 render_card("Economic Calendar", "today's high-impact events", calendar_body)
 render_card("Upgrades / Downgrades", "analyst moves", analyst_body)
 render_card("Catalyst Scanner", "live Yahoo article links", catalyst_body)
-render_card("Live Scanner", "momentum | volume | catalyst", scanner_body)
+render_card("Potential Plays", "momentum | volume | catalyst", scanner_body)
