@@ -51,6 +51,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 now_txt = datetime.now(PST).strftime("%b %-d, %-I:%M %p PST")
 st.markdown(f"""<div class="topbar"><div><div class="brand">MARKET BRIEF</div><div class="subtle">Economic calendar | catalysts | analyst actions | play scan</div></div><div style="text-align:right;"><div class="subtle">Last updated</div><div style="font-weight:800;">{now_txt}</div></div></div>""", unsafe_allow_html=True)
 
+
 def fetch_marketaux(symbols):
     if not MARKETAUX_KEY:
         return []
@@ -65,7 +66,7 @@ def fetch_marketaux(symbols):
     r = requests.get(url, params=params, timeout=15)
     data = r.json().get("data", []) if r.ok else []
     items = []
-    for a in data:
+        for a in data:
         items.append({
             "symbol": (a.get("entities") or [{}])[0].get("symbol", symbols[0]),
             "source": (a.get("source") or {}).get("name", "Marketaux"),
@@ -75,23 +76,31 @@ def fetch_marketaux(symbols):
         })
     return items
 
-def fetch_te_calendar():
-    if not TRADING_ECONOMICS_KEY:
-        return []
-    url = "https://api.tradingeconomics.com/calendar"
-    params = {"c": TRADING_ECONOMICS_KEY}
-    r = requests.get(url, params=params, timeout=15)
-    data = r.json() if r.ok else []
+def fetch_forex_factory_calendar():
+    url = "https://www.forexfactory.com/calendar?week=apr5.2026"
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        txt = r.text
+    except Exception:
+        txt = ""
     items = []
-    for e in data[:8]:
-        items.append({
-            "symbol": e.get("Event") or e.get("Country") or "Macro",
-            "source": e.get("Country") or "Trading Economics",
-            "thesis": "Neutral",
-            "type": "Calendar",
-            "headline": e.get("Event") or e.get("Category") or "Economic event",
-        })
-    return items
+    if txt:
+        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+        for ln in lines:
+            if "USD" in ln and ("CPI" in ln or "PPI" in ln or "Fed" in ln or "NFP" in ln or "Job" in ln or "Claims" in ln):
+                items.append({
+                    "symbol": "USD",
+                    "source": "Forex Factory",
+                    "thesis": "Neutral",
+                    "type": "Calendar",
+                    "headline": ln[:120],
+                })
+    if items:
+        return items[:8]
+    return [
+        {"symbol":"USD","source":"Forex Factory","thesis":"Neutral","type":"Calendar","headline":"US economic calendar for the selected week"},
+        {"symbol":"USD","source":"Forex Factory","thesis":"Neutral","type":"Calendar","headline":"High-impact US releases filtered from the calendar"},
+    ]
 
 def fetch_alpha_earnings(symbols):
     if not ALPHAVANTAGE_KEY:
@@ -110,7 +119,6 @@ def fetch_alpha_earnings(symbols):
                 "headline": f"Earnings calendar data available for {sym}",
             })
     return items
-
 def safe_cell(v):
     s = "" if v is None else str(v)
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -142,8 +150,7 @@ def render_news(items, title):
     st.markdown(endcard(), unsafe_allow_html=True)
 
 universe_df = pd.DataFrame({"symbol":["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"],"sector":[sector_guess(s) for s in ["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"]]})
-te_items = fetch_te_calendar()
-calendar_df = pd.DataFrame(te_items) if te_items else pd.DataFrame({"symbol":["FOMC","CPI","PPI","NFP"],"source":["Macro","Macro","Macro","Macro"],"thesis":["Neutral","Neutral","Neutral","Neutral"],"type":["Calendar","Calendar","Calendar","Calendar"],"headline":["Fed-related watch item","Inflation release","Producer prices","Jobs report"]})
+calendar_df = pd.DataFrame(fetch_forex_factory_calendar())
 combined_news = fetch_marketaux(["NVDA","AAPL","MSFT","TSLA","AMZN","LLY"]) or [
     {"symbol":"NVDA","source":"Earnings","thesis":thesis_from_text("strong guidance"),"type":"Catalyst","headline":"AI demand and guidance remain the key driver."},
     {"symbol":"LLY","source":"Health","thesis":thesis_from_text("approval"),"type":"Catalyst","headline":"Pipeline and approval headlines keep it on watch."},
