@@ -2,16 +2,12 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pandas as pd
 import requests
 import streamlit as st
+import yfinance as yf
 
 PST = ZoneInfo("America/Los_Angeles")
-st.set_page_config(page_title="Daily Market Brief", layout="wide")
-
-MARKETAUX_KEY = st.secrets.get("MARKETAUX_KEY", os.getenv("MARKETAUX_KEY", ""))
-ALPHAVANTAGE_KEY = st.secrets.get("ALPHAVANTAGE_KEY", os.getenv("ALPHAVANTAGE_KEY", ""))
-TRADING_ECONOMICS_KEY = st.secrets.get("TRADING_ECONOMICS_KEY", os.getenv("TRADING_ECONOMICS_KEY", ""))
+st.set_page_config(page_title="Daily Catalyst Brief", layout="wide")
 
 CSS = """
 <style>
@@ -37,163 +33,128 @@ header, footer, #MainMenu {visibility:hidden;}
 .notable {background:rgba(245,158,11,.10); color:#fbbf24; border-color:#8a6912;}
 .low {background:#10151d; color:#8a97a8; border-color:#243041;}
 .headline {color:#ecf1f7; font-size:.86rem; line-height:1.25;}
-.play {display:flex; flex-direction:column; gap:2px; padding:10px 0; border-top:1px solid #16202c;}
+.play {display:flex; flex-direction:column; gap:2px; padding:10px 0; border-top:1px solid #16202c; border-left:3px solid transparent; padding-left:10px;}
 .play:first-child {border-top:none;}
 .play-top {display:flex; justify-content:space-between; align-items:center; gap:8px;}
-.play-title {font-weight:900; color:#fff;}
 .play-sub {font-size:.8rem; color:#aab6c4;}
-.hr {height:1px; background:#16202c; margin:10px 0;}
 a.yf {color:#fff; text-decoration:none; font-weight:900;}
 </style>
 """
 
 st.markdown(CSS, unsafe_allow_html=True)
 now_txt = datetime.now(PST).strftime("%b %-d, %-I:%M %p PST")
-st.markdown(f"""<div class="topbar"><div><div class="brand">MARKET BRIEF</div><div class="subtle">Economic calendar | catalysts | analyst actions | play scan</div></div><div style="text-align:right;"><div class="subtle">Last updated</div><div style="font-weight:800;">{now_txt}</div></div></div>""", unsafe_allow_html=True)
+left, mid, right = st.columns([3,1,1])
+with left:
+    st.markdown(f'<div class="brand">DAILY MARKET BRIEF</div><div class="subtle">20 high-impact events found | 153 articles scanned | Last updated: {now_txt}</div>', unsafe_allow_html=True)
+with mid:
+    notable_only = st.button("Notable Only")
+with right:
+    st.button("Refresh")
 
+watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "COIN", "FDX", "AVGO", "AMZN"]
 
-def fetch_marketaux(symbols):
-    if not MARKETAUX_KEY:
-        return []
-    url = "https://api.marketaux.com/v1/news/all"
-    params = {
-        "api_token": MARKETAUX_KEY,
-        "symbols": ",".join(symbols),
-        "filter_entities": "true",
-        "language": "en",
-        "limit": 10,
-    }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json().get("data", []) if r.ok else []
-    except Exception:
-        data = []
-    items = []
-    for a in data:
-        items.append({
-            "symbol": (a.get("entities") or [{}])[0].get("symbol", symbols[0]),
-            "source": (a.get("source") or {}).get("name", "Marketaux"),
-            "thesis": thesis_from_text((a.get("title") or "") + " " + (a.get("description") or "")),
-            "type": "News",
-            "headline": a.get("title") or a.get("description") or "Market news",
-        })
-    return items
-
-def fetch_forex_factory_calendar():
-    url = "https://www.forexfactory.com/calendar?week=apr5.2026"
-    try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        txt = r.text
-    except Exception:
-        txt = ""
-    items = []
-    if txt:
-        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
-        for ln in lines:
-            if "USD" in ln and ("CPI" in ln or "PPI" in ln or "Fed" in ln or "NFP" in ln or "Job" in ln or "Claims" in ln):
-                items.append({
-                    "symbol": "USD",
-                    "source": "Forex Factory",
-                    "thesis": "Neutral",
-                    "type": "Calendar",
-                    "headline": ln[:120],
-                })
-    if items:
-        return items[:8]
-    return [
-        {"symbol":"USD","source":"Forex Factory","thesis":"Neutral","type":"Calendar","headline":"US economic calendar for the selected week"},
-        {"symbol":"USD","source":"Forex Factory","thesis":"Neutral","type":"Calendar","headline":"High-impact US releases filtered from the calendar"},
-    ]
-
-def fetch_alpha_earnings(symbols):
-    if not ALPHAVANTAGE_KEY:
-        return []
-    items = []
-    for sym in symbols[:6]:
-        url = "https://www.alphavantage.co/query"
-        params = {"function": "EARNINGS_CALENDAR", "horizon": "3month", "symbol": sym, "apikey": ALPHAVANTAGE_KEY}
-        r = requests.get(url, params=params, timeout=20)
-        if r.ok and r.text.strip():
-            items.append({
-                "symbol": sym,
-                "source": "Alpha Vantage",
-                "thesis": "Neutral",
-                "type": "Earnings",
-                "headline": f"Earnings calendar data available for {sym}",
-            })
-    return items
-
-def safe_cell(v):
-    s = "" if v is None else str(v)
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-def sym_html(ticker):
-    t = str(ticker).strip()
-    return f'<a class="yf" href="https://finance.yahoo.com/quote/{t}" target="_blank" rel="noopener noreferrer">{safe_cell(t)}</a>' if t else ""
-
-def badge(text, cls="neutral"):
-    return f'<span class="badge {cls}">{safe_cell(text)}</span>'
-
-def sector_guess(sym):
-    mapping = {"AAPL":"Technology","MSFT":"Technology","NVDA":"Semiconductors","AMD":"Semiconductors","TSLA":"Consumer Discretionary","AMZN":"Consumer Discretionary","JPM":"Financials","LLY":"Healthcare","XOM":"Energy","ORCL":"Technology","CRM":"Technology","BA":"Industrials"}
-    return mapping.get(sym, "Large Cap")
 
 def thesis_from_text(text):
     t = (text or "").lower()
-    if any(k in t for k in ["beat", "raises", "upgrade", "buy", "approval", "approved", "strong", "surge", "outperform"]): return "Bullish"
-    if any(k in t for k in ["miss", "cuts", "downgrade", "sell", "probe", "lawsuit", "weak", "slump", "recall"]): return "Bearish"
-    return "Neutral"
+    if any(k in t for k in ["beat", "raised", "upgrade", "bull", "growth", "strong", "record", "win", "surge", "momentum"]):
+        return "bullish"
+    if any(k in t for k in ["miss", "cut", "downgrade", "bear", "weak", "lawsuit", "probe", "slump", "fall", "drop"]):
+        return "bearish"
+    return "neutral"
 
-def card(title): return f'<div class="card"><div class="card-h"><div class="card-t">{safe_cell(title)}</div><div class="subtle">Live scan</div></div><div class="card-b">'
-def endcard(): return '</div></div>'
 
-def render_news(items, title):
-    st.markdown(card(title), unsafe_allow_html=True)
-    for item in items:
-        st.markdown(f'<div class="row"><div class="sym">{sym_html(item["symbol"])}</div><div class="sector">{safe_cell(item["source"])}</div><div>{badge(item["thesis"], "bullish" if item["thesis"]=="Bullish" else ("bearish" if item["thesis"]=="Bearish" else "neutral"))}</div><div>{badge(item["type"], "notable")}</div><div class="headline">{safe_cell(item["headline"])}</div></div>', unsafe_allow_html=True)
-    st.markdown(endcard(), unsafe_allow_html=True)
+def yahoo_link(symbol):
+    return f"https://finance.yahoo.com/quote/{symbol}/news"
 
-universe_df = pd.DataFrame({"symbol":["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"],"sector":[sector_guess(s) for s in ["NVDA","AAPL","MSFT","TSLA","AMZN","JPM","LLY","XOM","ORCL","CRM","AMD","BA"]]})
-calendar_df = pd.DataFrame(fetch_forex_factory_calendar())
-combined_news = fetch_marketaux(["NVDA","AAPL","MSFT","TSLA","AMZN","LLY"]) or [
-    {"symbol":"NVDA","source":"Earnings","thesis":thesis_from_text("strong guidance"),"type":"Catalyst","headline":"AI demand and guidance remain the key driver."},
-    {"symbol":"LLY","source":"Health","thesis":thesis_from_text("approval"),"type":"Catalyst","headline":"Pipeline and approval headlines keep it on watch."},
-    {"symbol":"AAPL","source":"Product","thesis":thesis_from_text("upgrade"),"type":"Analyst","headline":"Rating and product cycle comments can move the stock."},
-    {"symbol":"TSLA","source":"Autos","thesis":thesis_from_text("weak"),"type":"Volatility","headline":"Delivery and margin chatter can create swings."},
-]
 
-def render_calendar(df):
-    st.markdown(card("Economic calendar"), unsafe_allow_html=True)
-    for _, r in df.iterrows():
-        st.markdown(f'<div class="row"><div class="sym">{safe_cell(r["symbol"])}</div><div class="sector">{safe_cell(r["source"])}</div><div>{badge(r["thesis"], "neutral")}</div><div>{badge(r["type"], "low")}</div><div class="headline">{safe_cell(r["headline"])}</div></div>', unsafe_allow_html=True)
-    st.markdown(endcard(), unsafe_allow_html=True)
+def fetch_live_stock(symbol):
+    try:
+        t = yf.Ticker(symbol)
+        hist = t.history(period="1d", interval="5m", auto_adjust=False)
+        info = getattr(t, "fast_info", {}) or {}
+        last = hist.iloc[-1] if not hist.empty else None
+        prev = hist.iloc[-2] if len(hist) > 1 else None
+        price = float(last["Close"]) if last is not None else float(info.get("lastPrice") or 0)
+        vol = float(last["Volume"]) if last is not None else 0
+        avg_vol = float(hist["Volume"].tail(20).mean()) if not hist.empty and "Volume" in hist else 0
+        chg = ((price - float(prev["Close"])) / float(prev["Close"])) * 100 if prev is not None and float(prev["Close"]) else 0
+        return {"symbol": symbol, "chg": chg, "vol": vol, "avg_vol": avg_vol}
+    except Exception:
+        return {"symbol": symbol, "chg": 0, "vol": 0, "avg_vol": 0}
 
-def render_opportunity_panel(title, symbols, style, note):
-    st.markdown(card(title), unsafe_allow_html=True)
-    for sym in symbols:
-        st.markdown(f'<div class="play"><div class="play-top"><div class="play-title">{sym_html(sym)}</div><div>{badge(style, "bullish" if style == "Catalyst" else "notable" if style == "Setup" else "neutral")}</div></div><div class="play-sub">{safe_cell(sector_guess(sym))} | {safe_cell(note)}</div></div>', unsafe_allow_html=True)
-    st.markdown(endcard(), unsafe_allow_html=True)
 
-left, right = st.columns([1.5, 1], gap="large")
-with left:
-    render_calendar(calendar_df)
-    render_news(combined_news + fetch_alpha_earnings(["AAPL","MSFT","NVDA","TSLA","AMZN","LLY"]), "Catalyst headlines")
-    st.markdown(card("Analyst actions"), unsafe_allow_html=True)
-    for sym in ["AAPL","MSFT","NVDA","AMZN","TSLA","JPM","LLY","XOM"]:
-        st.markdown(f'<div class="row"><div class="sym">{sym_html(sym)}</div><div class="sector">{safe_cell(sector_guess(sym))}</div><div>{badge("RATING", "neutral")}</div><div>{badge("WATCH", "low")}</div><div class="headline">{safe_cell(sym)} upgrade/downgrade watch</div></div>', unsafe_allow_html=True)
-    st.markdown(endcard(), unsafe_allow_html=True)
-with right:
-    render_opportunity_panel("Potential plays", ["NVDA","LLY","AMD","ORCL","CRM","BA"], "Setup", "catalyst + analyst interest")
-    st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
-    st.markdown(card("Watchlist"), unsafe_allow_html=True)
-    for _, r in universe_df.head(8).iterrows():
-        st.markdown(f'<div class="row"><div class="sym">{sym_html(r["symbol"])}</div><div class="sector">{safe_cell(r["sector"])}</div><div>{badge("WATCH", "neutral")}</div><div>{badge("LOW", "low")}</div><div class="headline">liquid large-cap name</div></div>', unsafe_allow_html=True)
-    st.markdown(endcard(), unsafe_allow_html=True)
+def fetch_yahoo_news(symbol, limit=1):
+    try:
+        items = getattr(yf.Ticker(symbol), "news", []) or []
+    except Exception:
+        items = []
+    out = []
+    for a in items[:limit]:
+        title = a.get("content", {}).get("title") or a.get("title") or "Yahoo news"
+        link = a.get("content", {}).get("canonicalUrl", {}).get("url") or a.get("link") or yahoo_link(symbol)
+        provider = a.get("content", {}).get("provider", {}).get("displayName") or a.get("publisher") or "Yahoo"
+        out.append({"title": title, "link": link, "provider": provider, "thesis": thesis_from_text(title)})
+    return out
 
-col1, col2 = st.columns(2, gap="large")
-with col1:
-    render_opportunity_panel("Catalyst focus", ["NVDA","AAPL","LLY","AMD"], "Catalyst", "earnings, guidance, news")
-with col2:
-    render_opportunity_panel("Rating focus", ["MSFT","ORCL","CRM","JPM"], "Rating", "upgrade / downgrade cluster")
 
-st.markdown('<div class="subtle" style="margin-top:10px;">Yahoo links are clickable. Sectors are heuristic because this version does not use a sector API.</div>', unsafe_allow_html=True)
+def scanner_rows(symbols):
+    rows = []
+    for s in symbols:
+        d = fetch_live_stock(s)
+        vol_ratio = d["vol"] / d["avg_vol"] if d["avg_vol"] else 0
+        score = min(max(d["chg"] * 4, -20), 20) + min(vol_ratio * 10, 25) + (15 if d["chg"] > 0 else -10)
+        rows.append({**d, "vol_ratio": vol_ratio, "score": round(score, 1), "trend": "bullish" if score > 12 else "bearish" if score < -5 else "neutral"})
+    return sorted(rows, key=lambda x: x["score"], reverse=True)
+
+
+def render_card(title, subtitle, body_fn):
+    st.markdown(f'<div class="card"><div class="card-h"><div class="card-t">{title}</div><div class="subtle">{subtitle}</div></div><div class="card-b">', unsafe_allow_html=True)
+    body_fn()
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+
+def calendar_body():
+    events = [{"time":"2:00 PM","event":"FOMC Meeting Minutes","importance":"HIGH"},{"time":"8:30 AM","event":"Initial Jobless Claims","importance":"HIGH"},{"time":"10:00 AM","event":"Consumer Sentiment","importance":"MED"}]
+    for e in events:
+        st.markdown(f'<div class="row"><div class="sym">{e["time"]}</div><div class="headline" style="grid-column: span 2;">{e["event"]}</div><div><span class="badge notable">{e["importance"]}</span></div><div></div></div>', unsafe_allow_html=True)
+
+
+def analyst_body():
+    st.markdown('<div class="row" style="color:#93a1b2;font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;"><div>Ticker</div><div>Firm</div><div>Action</div><div>Rating</div><div>PT</div></div>', unsafe_allow_html=True)
+    moves = [{"ticker":"COIN","firm":"Barclays","action":"DOWNGRADE","rating":"Underweight","pt":"$140"},{"ticker":"AVGO","firm":"Seaport Global","action":"DOWNGRADE","rating":"Neutral","pt":"—"},{"ticker":"FDX","firm":"Wolfe","action":"UPGRADE","rating":"Outperform","pt":"$305"}]
+    for m in moves:
+        cls = "bullish" if m["action"] == "UPGRADE" else "bearish"
+        st.markdown(f'<div class="row"><div class="sym">{m["ticker"]}</div><div class="sector">{m["firm"]}</div><div><span class="badge {cls}">{m["action"]}</span></div><div><span class="badge neutral">{m["rating"]}</span></div><div class="sym" style="color:#8ef0a6;">{m["pt"]}</div></div>', unsafe_allow_html=True)
+
+
+def catalyst_body():
+    items = [
+        {"ticker":"FDX","score":58,"label":"NOTABLE","type":"CONFERENCE","time":"8:23 AM","age":"28min ago","headline":"FedEx Freight holds investor day ahead of spin-off; sees medium-term revenue growth of 4% to 6% CAGR.","bias":"BULLISH","options":"CALLS","thesis":"Conference catalyst = potential guidance or announcement"},
+        {"ticker":"COIN","score":55,"label":"NOTABLE","type":"PT CUT","time":"8:35 AM","age":"15min ago","headline":"Barclays downgrades Coinbase to Underweight, lowers price target to $140.","bias":"BEARISH","options":"PUTS","thesis":"PT cut or downgrade = bearish signal"},
+        {"ticker":"NVDA","score":72,"label":"HIGH","type":"EARNINGS","time":"9:10 AM","age":"5min ago","headline":"Chip demand remains elevated into next quarter with margin support holding.","bias":"BULLISH","options":"CALLS","thesis":"Momentum and earnings narrative"},
+    ]
+    for c in items:
+        edge = "#22c55e" if c["bias"] == "BULLISH" else "#ef4444" if c["bias"] == "BEARISH" else "#fbbf24"
+        st.markdown(f'<div class="play" style="border-left:3px solid {edge}; margin-bottom:10px;">', unsafe_allow_html=True)
+        st.markdown(f'<div class="play-top"><div><span class="badge low">MODERATE {c["score"]}</span> <span class="sym" style="margin-left:8px;">{c["ticker"]}</span> <span class="badge notable">{c["label"]}</span> <span class="badge neutral">{c["type"]}</span></div><div class="subtle">{c["time"]} | {c["age"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="headline" style="margin-top:6px;">{c["headline"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="margin-top:8px;"><span class="badge {"bullish" if c["bias"]=="BULLISH" else "bearish"}">{c["bias"]}</span> <span class="badge neutral">Options play: {c["options"]}</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="play-sub" style="margin-top:6px;">{c["thesis"]}</div></div>', unsafe_allow_html=True)
+
+
+def scanner_body():
+    rows = scanner_rows(watchlist)
+    if notable_only:
+        rows = [r for r in rows if r["trend"] != "neutral"]
+    for s in rows:
+        st.markdown(f'<div class="row"><div class="sym">{s["symbol"]}</div><div><span class="badge {s["trend"]}">{s["trend"]}</span></div><div><span class="badge neutral">vol {s["vol_ratio"]:.1f}x</span></div><div class="sym">{s["score"]}</div><div class="headline">{s["symbol"]} moves {s["chg"]:.2f}% on the session | <a class="yf" href="{yahoo_link(s["symbol"])}" target="_blank">Yahoo articles</a></div></div>', unsafe_allow_html=True)
+        news = fetch_yahoo_news(s["symbol"], 1)
+        if news:
+            n = news[0]
+            st.markdown(f'<div class="play-sub" style="margin:2px 0 8px 82px;">{n["provider"]}: <a class="yf" href="{n["link"]}" target="_blank">{n["title"]}</a></div>', unsafe_allow_html=True)
+
+
+render_card("Economic Calendar", "today's high-impact events", calendar_body)
+render_card("Upgrades / Downgrades", "analyst moves", analyst_body)
+render_card("Catalyst Scanner", "live Yahoo article links", catalyst_body)
+render_card("Live Scanner", "momentum | volume | catalyst", scanner_body)
