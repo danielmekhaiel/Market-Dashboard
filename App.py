@@ -63,10 +63,13 @@ def fetch_marketaux(symbols):
         "language": "en",
         "limit": 10,
     }
-    r = requests.get(url, params=params, timeout=15)
-    data = r.json().get("data", []) if r.ok else []
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        data = r.json().get("data", []) if r.ok else []
+    except Exception:
+        data = []
     items = []
-        for a in data:
+    for a in data:
         items.append({
             "symbol": (a.get("entities") or [{}])[0].get("symbol", symbols[0]),
             "source": (a.get("source") or {}).get("name", "Marketaux"),
@@ -119,6 +122,7 @@ def fetch_alpha_earnings(symbols):
                 "headline": f"Earnings calendar data available for {sym}",
             })
     return items
+
 def safe_cell(v):
     s = "" if v is None else str(v)
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
