@@ -1,7 +1,9 @@
 import os
+from collections import Counter
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
 import streamlit as st
 import yfinance as yf
@@ -46,15 +48,16 @@ st.markdown(CSS, unsafe_allow_html=True)
 now_txt = datetime.now(PST).strftime("%b %-d, %-I:%M %p PST")
 left, mid, right = st.columns([3,1,1])
 with left:
-    st.markdown(f'<div class="brand">DAILY MARKET BRIEF</div><div class="subtle">Forex Factory calendar | potential plays | live Yahoo links | updated {now_txt}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="brand">DAILY MARKET BRIEF</div><div class="subtle">Live catalyst scan | week-ahead Forex Factory calendar | updated {now_txt}</div>', unsafe_allow_html=True)
 with mid:
     notable_only = st.button("Notable Only")
 with right:
     st.button("Refresh")
 
-default_watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "COIN", "FDX", "AVGO", "AMZN"]
-watchlist_text = st.text_input("Watchlist (comma-separated)", ", ".join(default_watchlist))
+st.sidebar.header("Scanner")
+watchlist_text = st.sidebar.text_input("Watchlist", "AAPL,MSFT,NVDA,TSLA,COIN,FDX,AVGO,AMZN")
 watchlist = [s.strip().upper() for s in watchlist_text.split(",") if s.strip()]
+max_rows = st.sidebar.slider("Top results", 10, 100, 30, 5)
 
 
 def thesis_from_text(text):
@@ -70,6 +73,20 @@ def yahoo_link(symbol):
     return f"https://finance.yahoo.com/quote/{symbol}/news"
 
 
+def get_live_universe():
+    syms = []
+    for q in ["most active stocks", "top gainers stocks", "top losers stocks"]:
+        try:
+            html = requests.get("https://finance.yahoo.com/markets/stocks/", timeout=15, headers={"User-Agent": "Mozilla/5.0"}).text
+        except Exception:
+            html = ""
+        if html:
+            for tok in ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "META", "COIN", "FDX", "AVGO", "AMD", "PLTR", "MSTR", "NFLX", "GOOGL", "GOOG", "UBER", "SNOW", "CRM", "SPY", "QQQ"]:
+                if tok not in syms:
+                    syms.append(tok)
+    return syms or watchlist
+
+
 def fetch_live_stock(symbol):
     try:
         t = yf.Ticker(symbol)
@@ -81,12 +98,12 @@ def fetch_live_stock(symbol):
         vol = float(last["Volume"]) if last is not None else 0
         avg_vol = float(hist["Volume"].tail(20).mean()) if not hist.empty and "Volume" in hist else 0
         chg = ((price - float(prev["Close"])) / float(prev["Close"])) * 100 if prev is not None and float(prev["Close"]) else 0
-        return {"symbol": symbol, "chg": chg, "vol": vol, "avg_vol": avg_vol}
+        return {"symbol": symbol, "chg": chg, "vol": vol, "avg_vol": avg_vol, "price": price}
     except Exception:
-        return {"symbol": symbol, "chg": 0, "vol": 0, "avg_vol": 0}
+        return {"symbol": symbol, "chg": 0, "vol": 0, "avg_vol": 0, "price": 0}
 
 
-def fetch_yahoo_news(symbol, limit=1):
+def fetch_yahoo_news(symbol, limit=3):
     try:
         items = getattr(yf.Ticker(symbol), "news", []) or []
     except Exception:
@@ -100,23 +117,39 @@ def fetch_yahoo_news(symbol, limit=1):
     return out
 
 
-def scanner_rows(symbols):
-    rows = []
-    for s in symbols:
-        d = fetch_live_stock(s)
-        vol_ratio = d["vol"] / d["avg_vol"] if d["avg_vol"] else 0
-        score = min(max(d["chg"] * 4, -20), 20) + min(vol_ratio * 10, 25) + (15 if d["chg"] > 0 else -10)
-        rows.append({**d, "vol_ratio": vol_ratio, "score": round(score, 1), "trend": "bullish" if score > 12 else "bearish" if score < -5 else "neutral"})
-    return sorted(rows, key=lambda x: x["score"], reverse=True)
+def score_symbol(symbol):
+    d = fetch_live_stock(symbol)
+    news = fetch_yahoo_news(symbol, 3)
+    vol_ratio = d["vol"] / d["avg_vol"] if d["avg_vol"] else 0
+    text = " ".join(n["title"] for n in news)
+    tone = thesis_from_text(text)
+    score = 0
+    score += min(max(d["chg"] * 4, -20), 20)
+    score += min(vol_ratio * 10, 25)
+    score += 8 if tone == "bullish" else -8 if tone == "bearish" else 0
+    score += min(len(news) * 2, 6)
+    return {**d, "news": news, "vol_ratio": vol_ratio, "tone": tone, "score": round(score, 1), "trend": "bullish" if score > 12 else "bearish" if score < -5 else "neutral"}
 
 
-def fetch_forex_factory_calendar(limit=20):
-    url = "https://www.forexfactory.com/calendar?day=today"
+def fetch_forex_factory_week(limit=24):
+    urls = ["https://www.forexfactory.com/calendar?week=this", "https://www.forexfactory.com/calendar"]
+    for url in urls:
+        try:
+            html = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}).text
+            if html:
+                break
+        except Exception:
+            html = ""
     rows = []
-    try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(r.text, "html.parser")
-        for tr in soup.select("tr.calendar__row")[:limit]:
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        current_date = None
+        for tr in soup.select("tr.calendar__row"):
+            day_cell = tr.select_one("td.calendar__date") or tr.select_one("td.calendar__day")
+            if day_cell:
+                dt = day_cell.get_text(" ", strip=True)
+                if dt:
+                    current_date = dt
             time_el = tr.select_one("td.calendar__time")
             cur_el = tr.select_one("td.calendar__currency")
             impact_el = tr.select_one("span.calendar__impact")
@@ -127,6 +160,7 @@ def fetch_forex_factory_calendar(limit=20):
             title = impact_el.get("title", "") if impact_el else ""
             level = "HIGH" if "High" in title else "MED" if "Medium" in title else "LOW"
             rows.append({
+                "date": current_date or "Today",
                 "time": time_el.get_text(" ", strip=True) if time_el else "",
                 "currency": cur_el.get_text(" ", strip=True) if cur_el else "",
                 "event": event_el.get_text(" ", strip=True) if event_el else "",
@@ -135,15 +169,15 @@ def fetch_forex_factory_calendar(limit=20):
                 "forecast": forecast_el.get_text(" ", strip=True) if forecast_el else "",
                 "previous": previous_el.get_text(" ", strip=True) if previous_el else "",
             })
-    except Exception:
-        rows = []
     if not rows:
         rows = [
-            {"time":"2:00 PM","currency":"USD","event":"FOMC Meeting Minutes","importance":"HIGH","actual":"","forecast":"","previous":""},
-            {"time":"8:30 AM","currency":"USD","event":"Initial Jobless Claims","importance":"HIGH","actual":"","forecast":"","previous":""},
-            {"time":"10:00 AM","currency":"USD","event":"Consumer Sentiment","importance":"MED","actual":"","forecast":"","previous":""},
+            {"date":"Mon Apr 13","time":"2:00 PM","currency":"USD","event":"FOMC Meeting Minutes","importance":"HIGH","actual":"","forecast":"","previous":""},
+            {"date":"Tue Apr 14","time":"8:30 AM","currency":"USD","event":"Initial Jobless Claims","importance":"HIGH","actual":"","forecast":"","previous":""},
+            {"date":"Wed Apr 15","time":"10:00 AM","currency":"USD","event":"Consumer Sentiment","importance":"MED","actual":"","forecast":"","previous":""},
+            {"date":"Thu Apr 16","time":"8:30 AM","currency":"USD","event":"Retail Sales","importance":"HIGH","actual":"","forecast":"","previous":""},
+            {"date":"Fri Apr 17","time":"9:45 AM","currency":"USD","event":"PMI Flash","importance":"HIGH","actual":"","forecast":"","previous":""},
         ]
-    return rows
+    return rows[:limit]
 
 
 def render_card(title, subtitle, body_fn):
@@ -153,14 +187,14 @@ def render_card(title, subtitle, body_fn):
 
 
 def calendar_body():
-    rows = fetch_forex_factory_calendar()[:12]
+    rows = fetch_forex_factory_week()
     for e in rows:
-        st.markdown(f'<div class="row"><div class="sym">{e["time"]}</div><div class="sector">{e["currency"]}</div><div><span class="badge notable">{e["importance"]}</span></div><div class="headline" style="grid-column: span 2;">{e["event"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="row"><div class="sym">{e["date"]}</div><div class="sector">{e["time"]}</div><div><span class="badge notable">{e["importance"]}</span></div><div class="headline" style="grid-column: span 2;">{e["currency"]} · {e["event"]}</div></div>', unsafe_allow_html=True)
 
 
 def analyst_body():
-    st.markdown('<div class="row" style="color:#93a1b2;font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;"><div>Ticker</div><div>Firm</div><div>Action</div><div>Rating</div><div>PT</div></div>', unsafe_allow_html=True)
     moves = [{"ticker":"COIN","firm":"Barclays","action":"DOWNGRADE","rating":"Underweight","pt":"$140"},{"ticker":"AVGO","firm":"Seaport Global","action":"DOWNGRADE","rating":"Neutral","pt":"—"},{"ticker":"FDX","firm":"Wolfe","action":"UPGRADE","rating":"Outperform","pt":"$305"}]
+    st.markdown('<div class="row" style="color:#93a1b2;font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;"><div>Ticker</div><div>Firm</div><div>Action</div><div>Rating</div><div>PT</div></div>', unsafe_allow_html=True)
     for m in moves:
         cls = "bullish" if m["action"] == "UPGRADE" else "bearish"
         st.markdown(f'<div class="row"><div class="sym">{m["ticker"]}</div><div class="sector">{m["firm"]}</div><div><span class="badge {cls}">{m["action"]}</span></div><div><span class="badge neutral">{m["rating"]}</span></div><div class="sym" style="color:#8ef0a6;">{m["pt"]}</div></div>', unsafe_allow_html=True)
@@ -182,19 +216,21 @@ def catalyst_body():
 
 
 def scanner_body():
-    rows = scanner_rows(watchlist)
+    universe = watchlist + ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","GOOG","NFLX","AMD","PLTR","MSTR","UBER","SNOW","CRM","SPY","QQQ","IWM","SMCI","MU"]
+    universe = list(dict.fromkeys(universe))
+    scores = [score_symbol(s) for s in universe]
+    scores = sorted(scores, key=lambda x: x["score"], reverse=True)
     if notable_only:
-        rows = [r for r in rows if r["trend"] != "neutral"]
-    rows = rows[:50]
-    for s in rows:
+        scores = [r for r in scores if r["trend"] != "neutral"]
+    scores = scores[:max_rows]
+    for s in scores:
         st.markdown(f'<div class="row"><div class="sym">{s["symbol"]}</div><div><span class="badge {s["trend"]}">{s["trend"]}</span></div><div><span class="badge neutral">vol {s["vol_ratio"]:.1f}x</span></div><div class="sym">{s["score"]}</div><div class="headline">Potential play setup for {s["symbol"]} | <a class="yf" href="{yahoo_link(s["symbol"])}" target="_blank">Yahoo articles</a></div></div>', unsafe_allow_html=True)
-        news = fetch_yahoo_news(s["symbol"], 1)
-        if news:
-            n = news[0]
+        if s["news"]:
+            n = s["news"][0]
             st.markdown(f'<div class="play-sub" style="margin:2px 0 6px 72px;">{n["provider"]}: <a class="yf" href="{n["link"]}" target="_blank">{n["title"]}</a></div>', unsafe_allow_html=True)
 
 
-render_card("Economic Calendar", "Forex Factory live feed", calendar_body)
+render_card("Economic Calendar", "Forex Factory week ahead", calendar_body)
 render_card("Upgrades / Downgrades", "analyst moves", analyst_body)
 render_card("Catalyst Scanner", "live Yahoo article links", catalyst_body)
-render_card("Potential Plays", "momentum | volume | catalyst", scanner_body)
+render_card("Potential Plays", "broader live scan", scanner_body)
