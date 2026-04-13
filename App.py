@@ -184,26 +184,39 @@ def fetch_forex_factory_week(limit=80):
 
 
 
-def fetch_live_yahoo_news(query, limit=8):
+def fetch_live_briefing_updown(limit=12):
     try:
-        url = f"https://finance.yahoo.com/quote/{query}/news"
+        url = "https://www.briefing.com/calendars/updown?Filter=All"
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = []
+        for tr in soup.select("tr"):
+            txt = tr.get_text(" ", strip=True)
+            if txt and len(txt) > 18 and ("Upgrade" in txt or "Downgrade" in txt or "Initiated" in txt):
+                rows.append({"headline": txt, "link": url})
+        return rows[:limit]
+    except Exception:
+        return []
+
+def fetch_live_benzinga_like_news(limit=8):
+    try:
+        url = "https://finance.yahoo.com/news/"
         r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(r.text, "html.parser")
         items = []
-        for a in soup.select('a[href*="/news/"]'):
+        for a in soup.select('a'):
             href = a.get('href') or ''
             text = a.get_text(' ', strip=True)
-            if text and len(text) > 25:
+            if text and len(text) > 40 and href:
                 if href.startswith('/'):
                     href = 'https://finance.yahoo.com' + href
-                items.append((text, href))
-        seen = set()
-        out = []
-        for text, href in items:
-            if text in seen:
+                items.append({'headline': text, 'link': href})
+        out, seen = [], set()
+        for it in items:
+            if it['headline'] in seen:
                 continue
-            seen.add(text)
-            out.append({'headline': text, 'link': href})
+            seen.add(it['headline'])
+            out.append(it)
             if len(out) >= limit:
                 break
         return out
@@ -231,13 +244,14 @@ def calendar_body():
 
 
 def analyst_body():
+    raw = fetch_live_briefing_updown()
     moves = []
-    for ticker in ["COIN", "AVGO", "FDX", "NVDA", "AAPL"]:
-        news = fetch_live_yahoo_news(ticker, limit=1)
-        if news:
-            moves.append({"ticker": ticker, "firm": "Live source", "action": "LIVE", "rating": "News", "pt": "—", "link": news[0]["link"] if isinstance(news[0], tuple) else news[0]["link"]})
+    for item in raw[:5]:
+        txt = item["headline"]
+        action = "UPGRADE" if "Upgrade" in txt else "DOWNGRADE" if "Downgrade" in txt else "LIVE"
+        moves.append({"ticker": "—", "firm": "Briefing", "action": action, "rating": "Live", "pt": "—", "link": item["link"], "headline": txt})
     if not moves:
-        moves = [{"ticker":"—","firm":"No live feed","action":"N/A","rating":"N/A","pt":"—","link":"https://finance.yahoo.com/research-hub/screener/analyst_ratings/"}]
+        moves = [{"ticker":"—","firm":"Briefing","action":"NO DATA","rating":"N/A","pt":"—","link":"https://www.briefing.com/calendars/updown?Filter=All","headline":"No live analyst moves returned."}]
     st.markdown('<div class="row" style="color:#93a1b2;font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;"><div>Ticker</div><div>Firm</div><div>Action</div><div>Rating</div><div>PT</div></div>', unsafe_allow_html=True)
     for m in moves:
         cls = "bullish" if m["action"] == "UPGRADE" else "bearish"
@@ -245,15 +259,12 @@ def analyst_body():
 
 
 def catalyst_body():
-    tickers = ["FDX", "COIN", "NVDA", "AAPL", "TSLA"]
-    items = []
-    for t in tickers:
-        news = fetch_live_yahoo_news(t, limit=1)
-        if news:
-            n = news[0]
-            items.append({"ticker": t, "score": 50, "label": "LIVE", "type": "NEWS", "time": "Daily", "age": "fresh", "headline": n["headline"], "bias": "NEUTRAL", "options": "—", "thesis": "Live article feed", "link": n["link"]})
-    if not items:
-        items = [{"ticker":"—","score":0,"label":"NO FEED","type":"NEWS","time":"—","age":"—","headline":"Live catalyst feed unavailable.","bias":"NEUTRAL","options":"—","thesis":"Connect a news API or RSS source","link":"https://finance.yahoo.com/news/"}]
+    items = fetch_live_benzinga_like_news(limit=8)
+    mapped = []
+    for it in items:
+        mapped.append({"ticker":"NEWS","score":50,"label":"LIVE","type":"CATALYST","time":"Daily","age":"fresh","headline":it["headline"],"bias":"NEUTRAL","options":"—","thesis":"Live news article","link":it["link"]})
+    if not mapped:
+        mapped = [{"ticker":"—","score":0,"label":"NO DATA","type":"CATALYST","time":"—","age":"—","headline":"No live catalyst items returned.","bias":"NEUTRAL","options":"—","thesis":"Try a news API/RSS source","link":"https://finance.yahoo.com/news/"}]
     for c in items:
         edge = "#22c55e" if c["bias"] == "BULLISH" else "#ef4444" if c["bias"] == "BEARISH" else "#fbbf24"
         hl = "#ef4444" if c["label"] == "NOTABLE" else "#fbbf24"
