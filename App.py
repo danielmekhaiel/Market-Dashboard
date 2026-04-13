@@ -9,6 +9,11 @@ import streamlit as st
 import yfinance as yf
 from bs4 import BeautifulSoup
 
+import os
+
+FINNHUB_API_KEY = st.secrets.get("FINNHUB_API_KEY", os.getenv("FINNHUB_API_KEY", ""))
+MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
+
 PST = ZoneInfo("America/Los_Angeles")
 st.set_page_config(page_title="Daily Market Brief", layout="wide")
 
