@@ -332,3 +332,6 @@ render_card("Economic Calendar", "Forex Factory week ahead", calendar_body)
 render_card("Upgrades / Downgrades", "analyst moves", analyst_body)
 render_card("Catalyst Scanner", "live Yahoo article links", catalyst_body)
 render_card("Potential Plays", "broader live scan", scanner_body)
+
+
+# Fallback RSS/news note: add your RSS URL in the UI or code if APIs are unavailable.
