@@ -55,6 +55,9 @@ with right:
     st.empty()
 
 st.sidebar.header("Scanner")
+fin_key = os.getenv("FINNHUB_API_KEY", "")
+mar_key = os.getenv("MARKETAUX_API_KEY", "")
+st.sidebar.caption(f"FINNHUB_API_KEY: {'set' if fin_key else 'missing'} | MARKETAUX_API_KEY: {'set' if mar_key else 'missing'}")
 watchlist_text = st.sidebar.text_input("Watchlist", "AAPL,MSFT,NVDA,TSLA,COIN,FDX,AVGO,AMZN")
 watchlist = [s.strip().upper() for s in watchlist_text.split(",") if s.strip()]
 max_rows = st.sidebar.slider("Top results", 10, 100, 30, 5)
@@ -224,12 +227,12 @@ def fetch_finnhub_upgrade_downgrades(limit=12):
         out = []
         for x in data[:limit]:
             out.append({
-                "ticker": x.get("symbol", ""),
-                "firm": x.get("company", "Finnhub"),
-                "action": x.get("action", ""),
-                "rating": x.get("ratingFrom", ""),
-                "pt": str(x.get("priceTarget", "—")),
-                "headline": f"{x.get('analyst','Analyst')} {x.get('action','')} {x.get('symbol','')} to {x.get('ratingTo','')}"
+                "ticker": x.get("symbol") or x.get("ticker") or "",
+                "firm": x.get("company") or x.get("analyst") or "Finnhub",
+                "action": (x.get("action") or "").upper(),
+                "rating": x.get("ratingFrom") or x.get("ratingTo") or "",
+                "pt": str(x.get("priceTarget") or x.get("pt") or "—"),
+                "headline": x.get("headline") or f"{x.get('analyst','Analyst')} {x.get('action','')} {x.get('symbol','')}"
             })
         return out
     except Exception:
@@ -242,10 +245,11 @@ def fetch_marketaux_news(limit=10):
     try:
         url = f"https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit={limit}&api_token={token}"
         r = requests.get(url, timeout=20)
-        data = r.json().get("data", []) if r.ok else []
+        js = r.json() if r.ok else {}
+        data = js.get("data", [])
         out = []
         for x in data[:limit]:
-            out.append({"headline": x.get("title", ""), "link": x.get("url", "")})
+            out.append({"headline": x.get("title") or x.get("headline") or "", "link": x.get("url") or x.get("link") or ""})
         return out
     except Exception:
         return []
