@@ -3,12 +3,16 @@ import re
 import html
 import requests
 import streamlit as st
+import yfinance as yf
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="Multi-Ticker Scanner", layout="wide", initial_sidebar_state="collapsed")
 
 FINNHUB_API_KEY = st.secrets.get("FINNHUB_API_KEY", os.getenv("FINNHUB_API_KEY", ""))
 MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
 RSS_URL = st.secrets.get("RSS_URL", os.getenv("RSS_URL", ""))
+TICKERS = st.secrets.get("TICKERS", os.getenv("TICKERS", "AAPL,MSFT,NVDA,AMD,META,AMZN,GOOGL,TSLA")).split(",")
+TICKERS = [t.strip().upper() for t in TICKERS if t.strip()]
 
 st.markdown("""
 <style>
@@ -29,12 +33,52 @@ st.markdown("""
 .headline { color:#e6ffe6; font-size: 13px; line-height: 1.35; margin-top: 6px; }
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
+.small { color:#89b989; font-size: 11px; }
 </style>
 """, unsafe_allow_html=True)
 
 
 def clean_text(x):
     return re.sub(r"\s+", " ", html.unescape(str(x or ""))).strip()
+
+
+def badge(text, tone):
+    return f'<span class="tag {tone}">{clean_text(text)}</span>'
+
+
+@st.cache_data(ttl=30)
+def fetch_live_quotes(tickers):
+    rows = []
+    meta = []
+    for t in tickers:
+        try:
+            if FINNHUB_API_KEY:
+                r = requests.get(f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}", timeout=15)
+                js = r.json() if r.content else {}
+                price = js.get("c")
+                prev = js.get("pc")
+                chg = None if price is None or prev is None else price - prev
+                pct = None if price is None or prev in (None, 0) else (chg / prev) * 100
+                if price not in (None, 0):
+                    rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": f"Finnhub {r.status_code}"})
+                    meta.append(f"{t}: finnhub {r.status_code}")
+                    continue
+            hist = yf.Ticker(t).history(period="1d", interval="1m")
+            if not hist.empty:
+                last = hist.iloc[-1]
+                price = float(last["Close"])
+                prev = float(hist.iloc[0]["Open"]) if "Open" in hist.columns else float(last["Close"])
+                chg = price - prev
+                pct = (chg / prev) * 100 if prev else 0
+                rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": "yfinance"})
+                meta.append(f"{t}: yfinance")
+            else:
+                rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": "no data"})
+                meta.append(f"{t}: no data")
+        except Exception as e:
+            rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": f"error {type(e).__name__}"})
+            meta.append(f"{t}: error")
+    return rows, meta
 
 
 @st.cache_data(ttl=180)
@@ -49,21 +93,6 @@ def fetch_marketaux_news(limit=8):
     items = []
     for x in data[:limit]:
         items.append({"headline": x.get("title") or x.get("headline") or "", "link": x.get("url") or x.get("link") or "", "source": (x.get("source") or {}).get("name") if isinstance(x.get("source"), dict) else x.get("source") or "Marketaux"})
-    return items, f"status={r.status_code} items={len(items)}"
-
-
-@st.cache_data(ttl=180)
-def fetch_finnhub_analyst(limit=8):
-    token = FINNHUB_API_KEY
-    if not token:
-        return [], "missing FINNHUB_API_KEY"
-    url = f"https://finnhub.io/api/v1/stock/upgrade-downgrade?token={token}"
-    r = requests.get(url, timeout=20)
-    js = r.json() if r.content else {}
-    data = js if isinstance(js, list) else js.get("data", [])
-    items = []
-    for x in data[:limit]:
-        items.append({"ticker": x.get("symbol") or x.get("ticker") or "", "firm": x.get("company") or x.get("analyst") or "Finnhub", "action": (x.get("action") or "N/A").upper(), "rating": x.get("ratingFrom") or x.get("ratingTo") or "N/A", "pt": x.get("priceTarget") or x.get("pt") or "—", "headline": x.get("headline") or f"{x.get('analyst','Analyst')} {x.get('action','')} {x.get('symbol','')}"})
     return items, f"status={r.status_code} items={len(items)}"
 
 
@@ -82,19 +111,17 @@ def fetch_rss(url):
         return [], f"error={type(e).__name__}: {e}"
 
 
-def badge(text, tone):
-    return f'<span class="tag {tone}">{clean_text(text)}</span>'
-
-
-def render_card(ticker, company, score, action, rating, pt, tags, headline, link, source):
+def render_card(ticker, company, score, action, rating, pt, tags, headline, link, source, price=None, change=None, pct=None):
     color = "#7cff7c" if score >= 60 else "#ffd27a" if score >= 35 else "#ff8a8a"
     tag_html = "".join([badge(t, c) for t, c in tags])
     link_html = f'<a href="{html.escape(link)}" target="_blank">{html.escape(link)}</a>' if link else ""
+    price_line = "—" if price is None else f"${price:,.2f}"
+    chg_line = "—" if change is None else f"{change:+.2f} ({pct:+.2f}%)"
     st.markdown(f"""
 <div class="card">
   <div style="display:flex; gap:16px; align-items:flex-start; justify-content:space-between;">
     <div style="flex:1 1 auto; min-width:0;">
-      <div class="ticker">{clean_text(ticker)}</div>
+      <div class="ticker">{clean_text(ticker)} <span class="small">{price_line} | {chg_line}</span></div>
       <div class="company">{clean_text(company)}</div>
       <div style="margin-top:8px;">{tag_html}</div>
       <div class="headline">{clean_text(headline)}</div>
@@ -112,23 +139,23 @@ def render_card(ticker, company, score, action, rating, pt, tags, headline, link
 
 st.markdown('<div class="scanner-wrap">', unsafe_allow_html=True)
 st.markdown('<div class="title">MULTI-TICKER SCANNER</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Live catalyst and analyst feed with RSS fallback</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Live stock prices first, news and RSS second</div>', unsafe_allow_html=True)
 st.markdown("".join([f'<span class="chip">{c}</span>' for c in ["PIVOT", "2–5 day", "S&P 500", "High conviction"]]), unsafe_allow_html=True)
 
-analysts, analyst_meta = fetch_finnhub_analyst()
+quotes, quote_meta = fetch_live_quotes(TICKERS)
 news, news_meta = fetch_marketaux_news()
 rss_items, rss_meta = fetch_rss(RSS_URL)
 
-st.caption(f"Analyst: {analyst_meta} | Catalyst: {news_meta} | RSS: {rss_meta}")
+st.caption(f"Quotes: {' | '.join(quote_meta)}")
+st.caption(f"Catalyst: {news_meta} | RSS: {rss_meta}")
 
-st.markdown(f'<div style="margin-top:14px; color:#78d878; font-family: monospace; font-size:14px;">ANALYST ({len(analysts)})</div>', unsafe_allow_html=True)
-if analysts:
-    for i, x in enumerate(analysts):
-        render_card(x["ticker"] or "—", x["firm"], 100 - i * 4, x["action"], x["rating"], x["pt"], [(x["ticker"] or "TICKER", "green"), (x["firm"] or "FIRM", "amber")], x["headline"], "https://finance.yahoo.com/research-hub/screener/analyst_ratings/", "Finnhub analyst feed")
-else:
-    render_card("—", "No live feed", 0, "N/A", "N/A", "—", [("NO LIVE FEED", "red")], "Set FINNHUB_API_KEY and redeploy the app.", "https://finnhub.io/docs/api/upgrade-downgrade", "Finnhub analyst feed")
+st.markdown(f'<div style="margin-top:14px; color:#78d878; font-family: monospace; font-size:14px;">LIVE QUOTES ({len(quotes)})</div>', unsafe_allow_html=True)
+for i, q in enumerate(quotes):
+    score = 100 - i * 3 if q["price"] is not None else 0
+    tags = [("LIVE", "green"), (q["source"], "amber")]
+    render_card(q["ticker"], "Live stock quote", score, "MARKET", "QUOTE", "—", tags, "Real-time price stream", "", f"Quote source: {q['source']}", q["price"], q["change"], q["pct"])
 
-st.markdown('<div style="margin-top:18px; color:#78d878; font-family: monospace; font-size:14px;">CATALYST SCANNER</div>', unsafe_allow_html=True)
+st.markdown('<div style="margin-top:18px; color:#78d878; font-family: monospace; font-size:14px;">ANALYST / CATALYST</div>', unsafe_allow_html=True)
 if news:
     for i, x in enumerate(news):
         render_card("NEWS", x.get("source", "Marketaux"), 80 - i * 6, "LIVE", "N/A", "—", [("LIVE", "green"), (x["source"] or "NEWS", "amber")], x["headline"], x["link"], x["source"])
