@@ -31,7 +31,7 @@ st.markdown("""
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
 .small { color:#89b989; font-size: 11px; }
-.section { margin-top: 8px; color:#cfcfcf; font-family: Inter, "Segoe UI", Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:700; }
+.section { margin-top: 8px; color:#cfcfcf; font-family: "SF Pro Display", "Aptos", "Segoe UI", Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:700; }
 </style>
 """, unsafe_allow_html=True)
 
