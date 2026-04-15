@@ -143,8 +143,8 @@ def render_row(time, symb, trade, cp, side, strk, score, note, direction, source
     st.markdown(f"""
 <div class="card" style="padding:6px 10px; margin:4px 0;">
   <div style="display:grid; grid-template-columns: 1.1fr .9fr .8fr .8fr .9fr .8fr .5fr 1.8fr; gap:8px; align-items:center; font-size:12px; line-height:1.05;">
-    <div style="color:#a9a9a9;">{clean_text(time)}</div>
-    <div style="color:#f3f3f3; font-weight:700;">{clean_text(symb)}</div>
+    <div style="color:#a9a9a9; font-variant-numeric: tabular-nums;">{clean_text(time)}</div>
+    <div style="display:inline-block; padding:2px 8px; border-radius:999px; background: rgba(255,255,255,.06); color:#f3f3f3; font-weight:700;">{clean_text(symb)}</div>
     <div><span class="tag {trade_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(trade) if trade else '—'}</span></div>
     <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(cp)}</span></div>
     <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(side)}</span></div>
