@@ -31,7 +31,7 @@ st.markdown("""
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
 .small { color:#89b989; font-size: 11px; }
-.section { margin-top: 8px; color:#cfcfcf; font-family: monospace; font-size:11px; letter-spacing: .8px; }
+.section { margin-top: 8px; color:#cfcfcf; font-family: Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -138,8 +138,8 @@ def fetch_rss(url):
 
 def render_row(time, symb, trade, cp, side, strk, score, note, direction, source):
     color = "#7cff7c" if direction == "BULL" else "#ff8a8a"
-    side_color = "green" if side == "Calls" else "red"
-    trade_color = "amber" if trade != "" else "gray"
+    side_color = "green" if direction == "BULL" else "red"
+    trade_color = "green" if direction == "BULL" else "red"
     st.markdown(f"""
 <div class="card" style="padding:6px 10px; margin:4px 0;">
   <div style="display:grid; grid-template-columns: 1.1fr .9fr .8fr .8fr .9fr .8fr .5fr 1.8fr; gap:8px; align-items:center; font-size:12px; line-height:1.05;">
@@ -188,7 +188,7 @@ if dn:
     for i, q in enumerate(dn):
         render_row("—", q["ticker"], "", "Puts", "At Ask", "—", f"{q['pct']:+.2f}%", "Bear", "GAP DN", q["source"])
 else:
-    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "NO DATA", "Gappers down")
+    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "Gappers down")
 
 st.markdown('<div class="section">MOST ACTIVE / BIG MOVERS</div>', unsafe_allow_html=True)
 if act:
@@ -197,7 +197,7 @@ if act:
         direction = "Bull" if side == "Calls" else "Bear"
         render_row("—", q["ticker"], "Sweep" if i % 3 == 0 else "", side, "At Ask", "—", f"{q['pct']:+.2f}%", direction, "ACTIVE", q["source"])
 else:
-    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bear", "NO DATA", "Most active")
+    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bear", "Most active")
 
 st.markdown('<div class="section">CATALYST WATCH</div>', unsafe_allow_html=True)
 if news:
