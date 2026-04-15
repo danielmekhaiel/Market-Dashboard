@@ -31,7 +31,7 @@ st.markdown("""
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
 .small { color:#89b989; font-size: 11px; }
-.section { margin-top: 8px; color:#cfcfcf; font-family: Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:600; }
+.section { margin-top: 8px; color:#cfcfcf; font-family: Inter, "Segoe UI", Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -145,11 +145,11 @@ def render_row(time, symb, trade, cp, side, strk, score, note, direction, source
   <div style="display:grid; grid-template-columns: 1.1fr .9fr .8fr .8fr .9fr .8fr .5fr 1.8fr; gap:8px; align-items:center; font-size:12px; line-height:1.05;">
     <div style="color:#a9a9a9;">{clean_text(time)}</div>
     <div style="color:#f3f3f3; font-weight:700;">{clean_text(symb)}</div>
-    <div><span class="tag {trade_color}">{clean_text(trade) if trade else '—'}</span></div>
-    <div><span class="tag {side_color}">{clean_text(cp)}</span></div>
-    <div><span class="tag {side_color}">{clean_text(side)}</span></div>
+    <div><span class="tag {trade_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(trade) if trade else '—'}</span></div>
+    <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(cp)}</span></div>
+    <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(side)}</span></div>
     <div style="color:#e6e6e6;">{clean_text(strk)}</div>
-    <div style="color:{color}; font-weight:700;">{clean_text(direction)}</div>
+    <div style="color:{color}; font-weight:800;">{clean_text(direction)}</div>
     <div style="color:#cfcfcf;">{clean_text(note)} <span style="color:#888;">{clean_text(source)}</span></div>
   </div>
 </div>
