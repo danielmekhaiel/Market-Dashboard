@@ -4,15 +4,12 @@ import html
 import requests
 import streamlit as st
 import yfinance as yf
-from datetime import datetime, timezone
 
 st.set_page_config(page_title="Multi-Ticker Scanner", layout="wide", initial_sidebar_state="collapsed")
 
 FINNHUB_API_KEY = st.secrets.get("FINNHUB_API_KEY", os.getenv("FINNHUB_API_KEY", ""))
 MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
 RSS_URL = st.secrets.get("RSS_URL", os.getenv("RSS_URL", ""))
-TICKERS = st.secrets.get("TICKERS", os.getenv("TICKERS", "AAPL,MSFT,NVDA,AMD,META,AMZN,GOOGL,TSLA")).split(",")
-TICKERS = [t.strip().upper() for t in TICKERS if t.strip()]
 
 st.markdown("""
 <style>
@@ -34,6 +31,7 @@ st.markdown("""
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
 .small { color:#89b989; font-size: 11px; }
+.section { margin-top: 18px; color:#78d878; font-family: monospace; font-size:14px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,7 +59,7 @@ def fetch_live_quotes(tickers):
                 pct = None if price is None or prev in (None, 0) else (chg / prev) * 100
                 if price not in (None, 0):
                     rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": f"Finnhub {r.status_code}"})
-                    meta.append(f"{t}: finnhub {r.status_code}")
+                    meta.append(f"{t}:finnhub")
                     continue
             hist = yf.Ticker(t).history(period="1d", interval="1m")
             if not hist.empty:
@@ -71,14 +69,41 @@ def fetch_live_quotes(tickers):
                 chg = price - prev
                 pct = (chg / prev) * 100 if prev else 0
                 rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": "yfinance"})
-                meta.append(f"{t}: yfinance")
+                meta.append(f"{t}:yfinance")
             else:
                 rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": "no data"})
-                meta.append(f"{t}: no data")
-        except Exception as e:
-            rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": f"error {type(e).__name__}"})
-            meta.append(f"{t}: error")
+                meta.append(f"{t}:no-data")
+        except Exception:
+            rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": "error"})
+            meta.append(f"{t}:error")
     return rows, meta
+
+
+@st.cache_data(ttl=120)
+def fetch_broad_universe():
+    urls = [
+        "https://www.slickcharts.com/sp500/gainers",
+        "https://www.slickcharts.com/sp500/losers",
+        "https://www.slickcharts.com/market-movers",
+        "https://uk.finance.yahoo.com/markets/stocks/gainers/",
+    ]
+    syms = []
+    meta = []
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+            text = r.text
+            found = re.findall(r'"symbol":"([A-Z\.\-]{1,8})"', text)
+            if not found:
+                found = re.findall(r'\b[A-Z]{1,5}\b', text)
+            for s in found:
+                if s not in syms and len(s) <= 5 and s.isupper():
+                    syms.append(s)
+            meta.append(f"{url.split('//')[-1][:24]}:{len(found)}")
+        except Exception:
+            meta.append(f"{url.split('//')[-1][:24]}:error")
+    syms = [s for s in syms if s not in {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ"}]
+    return syms[:50], meta
 
 
 @st.cache_data(ttl=180)
@@ -139,23 +164,47 @@ def render_card(ticker, company, score, action, rating, pt, tags, headline, link
 
 st.markdown('<div class="scanner-wrap">', unsafe_allow_html=True)
 st.markdown('<div class="title">MULTI-TICKER SCANNER</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Live stock prices first, news and RSS second</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Broad market scan with gappers, catalyst watch, and news</div>', unsafe_allow_html=True)
 st.markdown("".join([f'<span class="chip">{c}</span>' for c in ["PIVOT", "2–5 day", "S&P 500", "High conviction"]]), unsafe_allow_html=True)
 
-quotes, quote_meta = fetch_live_quotes(TICKERS)
+universe, uni_meta = fetch_broad_universe()
+quotes, quote_meta = fetch_live_quotes(universe if universe else ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL"])
 news, news_meta = fetch_marketaux_news()
 rss_items, rss_meta = fetch_rss(RSS_URL)
 
-st.caption(f"Quotes: {' | '.join(quote_meta)}")
+st.caption(f"Universe: {' | '.join(uni_meta)}")
+st.caption(f"Quotes: {' | '.join(quote_meta[:25])}")
 st.caption(f"Catalyst: {news_meta} | RSS: {rss_meta}")
 
-st.markdown(f'<div style="margin-top:14px; color:#78d878; font-family: monospace; font-size:14px;">LIVE QUOTES ({len(quotes)})</div>', unsafe_allow_html=True)
-for i, q in enumerate(quotes):
-    score = 100 - i * 3 if q["price"] is not None else 0
-    tags = [("LIVE", "green"), (q["source"], "amber")]
-    render_card(q["ticker"], "Live stock quote", score, "MARKET", "QUOTE", "—", tags, "Real-time price stream", "", f"Quote source: {q['source']}", q["price"], q["change"], q["pct"])
+up = [q for q in quotes if q["pct"] is not None and q["pct"] >= 0]
+dn = [q for q in quotes if q["pct"] is not None and q["pct"] < 0]
+up = sorted(up, key=lambda x: x["pct"], reverse=True)[:15]
+dn = sorted(dn, key=lambda x: x["pct"])[:15]
+act = sorted([q for q in quotes if q["price"] is not None], key=lambda x: abs(x["pct"] or 0), reverse=True)[:15]
 
-st.markdown('<div style="margin-top:18px; color:#78d878; font-family: monospace; font-size:14px;">ANALYST / CATALYST</div>', unsafe_allow_html=True)
+st.markdown('<div class="section">DAILY GAPPERS UP</div>', unsafe_allow_html=True)
+if up:
+    for i, q in enumerate(up):
+        render_card(q["ticker"], "Market mover", 90 - i * 2, "GAP UP", "QUOTE", "—", [("GAP UP", "green"), (q["source"], "amber")], "Broad market gainer", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+else:
+    render_card("—", "No gainers", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No positive movers found.", "", "Gappers up")
+
+st.markdown('<div class="section">DAILY GAPPERS DOWN</div>', unsafe_allow_html=True)
+if dn:
+    for i, q in enumerate(dn):
+        render_card(q["ticker"], "Market mover", 90 - i * 2, "GAP DN", "QUOTE", "—", [("GAP DN", "red"), (q["source"], "amber")], "Broad market loser", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+else:
+    render_card("—", "No losers", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No negative movers found.", "", "Gappers down")
+
+st.markdown('<div class="section">MOST ACTIVE / BIG MOVERS</div>', unsafe_allow_html=True)
+if act:
+    for i, q in enumerate(act):
+        tone = "green" if (q["pct"] or 0) >= 0 else "red"
+        render_card(q["ticker"], "Market mover", 85 - i * 2, "ACTIVE", "QUOTE", "—", [("ACTIVE", "amber"), (q["source"], tone)], "High movement name", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+else:
+    render_card("—", "No active names", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No active movers found.", "", "Most active")
+
+st.markdown('<div class="section">CATALYST WATCH</div>', unsafe_allow_html=True)
 if news:
     for i, x in enumerate(news):
         render_card("NEWS", x.get("source", "Marketaux"), 80 - i * 6, "LIVE", "N/A", "—", [("LIVE", "green"), (x["source"] or "NEWS", "amber")], x["headline"], x["link"], x["source"])
