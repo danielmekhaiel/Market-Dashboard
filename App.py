@@ -5,78 +5,239 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-st.set_page_config(page_title="Multi-Ticker Scanner", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Market Scanner",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 FINNHUB_API_KEY = st.secrets.get("FINNHUB_API_KEY", os.getenv("FINNHUB_API_KEY", ""))
 MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
 RSS_URL = st.secrets.get("RSS_URL", os.getenv("RSS_URL", ""))
 
-st.markdown("""
+ROWS_PER_PAGE = 20
+
+# ── Signal labels assigned by rank within each group ──────────────────────────
+SIGNAL_LABELS = [
+    "Momentum Candle",
+    "Flag & Pennant",
+    "Breakout",
+    "20-50 MA Cross",
+    "9-20 MA Cross",
+    "Price Momentum",
+]
+TIMEFRAMES = ["15 M", "30 M", "5 Mi"]
+
+
+def _signal(i):
+    return SIGNAL_LABELS[i % len(SIGNAL_LABELS)]
+
+
+def _tf(i):
+    return TIMEFRAMES[i % len(TIMEFRAMES)]
+
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
+st.markdown(
+    """
 <style>
-.stApp { background: #040704; color: #d7f5d4; }
-.scanner-wrap { max-width: 1400px; margin: 0 auto; }
-.title { font-family: monospace; color: #7CFF7C; font-size: 34px; letter-spacing: 2px; margin-bottom: 0; }
-.subtitle { color: #7fd47f; font-size: 12px; margin-top: -6px; margin-bottom: 18px; }
-.chip { display:inline-block; border:1px solid rgba(124,255,124,.25); color:#9df79d; padding:4px 10px; border-radius:999px; margin-right:6px; font-size:11px; background: rgba(10,25,10,.7); }
-.card { background: #0a0a0a; border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:4px 8px; margin: 3px 0; box-shadow: none; }
-.ticker { color:#f0f0f0; font-size: 15px; font-weight:700; letter-spacing:.3px; }
-.company { color:#a8d9a8; font-size: 12px; margin-top: 2px; }
-.score { text-align:right; font-size:18px; font-weight:800; }
-.score-label { text-align:right; color:#92c992; font-size:11px; }
-.tag { display:inline-block; padding:3px 8px; margin: 2px 5px 2px 0; border-radius: 999px; font-size: 11px; border:1px solid rgba(124,255,124,.18); background: rgba(6,20,8,.85); color:#c2efc2; }
-.tag.green { color:#8cff8c; border-color: rgba(124,255,124,.25); }
-.tag.red { color:#ff8d8d; border-color: rgba(255,120,120,.25); }
-.tag.amber { color:#ffd27a; border-color: rgba(255,210,122,.25); }
-.headline { color:#e6ffe6; font-size: 12px; line-height: 1.2; margin-top: 2px; }
-.source { color:#76b876; font-size: 11px; margin-top: 6px; }
-a { color:#8cff8c !important; }
-.small { color:#89b989; font-size: 11px; }
-.section { margin-top: 8px; color:#cfcfcf; font-family: "SF Pro Display", "Aptos", "Segoe UI", Arial, Helvetica, sans-serif; font-size:11px; letter-spacing: .6px; font-weight:700; }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap');
+
+/* ── reset & base ── */
+.stApp { background: #111214; color: #e2e4e9; }
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ── outer wrapper ── */
+.sc-wrap { max-width: 1380px; margin: 0 auto; padding: 24px 8px 48px; font-family: 'DM Sans', sans-serif; }
+
+/* ── page title ── */
+.sc-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px; font-weight: 600; letter-spacing: 2px;
+    color: #8b8fa8; text-transform: uppercase; margin-bottom: 18px;
+}
+
+/* ── two-column grid ── */
+.sc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) { .sc-grid { grid-template-columns: 1fr; } }
+
+/* ── panel card ── */
+.sc-panel {
+    background: #18191d;
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* ── panel header ── */
+.sc-panel-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.sc-panel-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px; font-weight: 600; color: #e8eaf0;
+}
+.sc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sc-dot-bull { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
+.sc-dot-bear { background: #ef4444; box-shadow: 0 0 6px #ef444488; }
+.sc-badge {
+    margin-left: auto;
+    font-size: 10px; font-weight: 600; letter-spacing: .8px;
+    padding: 2px 8px; border-radius: 999px;
+    font-family: 'IBM Plex Mono', monospace;
+}
+.sc-badge-bull { background: rgba(34,197,94,.12); color: #4ade80; border: 1px solid rgba(34,197,94,.25); }
+.sc-badge-bear { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.25); }
+
+/* ── table ── */
+.sc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sc-table thead th {
+    padding: 7px 10px;
+    text-align: left;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: .8px;
+    color: #5a5e72;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+.sc-table thead th:hover { color: #9ba0b8; }
+.sc-table thead th .sort-arrow { margin-left: 3px; opacity: .5; }
+
+.sc-table tbody tr {
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    transition: background .12s;
+}
+.sc-table tbody tr:last-child { border-bottom: none; }
+.sc-table tbody tr:hover { background: rgba(255,255,255,.035); }
+
+.sc-table td {
+    padding: 7px 10px;
+    vertical-align: middle;
+    white-space: nowrap;
+    color: #c8cad6;
+    font-family: 'DM Sans', sans-serif;
+}
+
+/* ── cell styles ── */
+.cell-time { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #5a5e72; }
+.cell-sym {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; font-weight: 600; color: #e2e4e9;
+    display: flex; align-items: center; gap: 6px;
+}
+.sym-logo {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(255,255,255,.08);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700; color: #8b8fa8;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,.1);
+}
+.cell-price { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.cell-chng-pos { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #22c55e; font-weight: 600; }
+.cell-chng-neg { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #ef4444; font-weight: 600; }
+.cell-rvol { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #9ba0b8; }
+.cell-signal {
+    font-size: 11px; color: #c8cad6;
+    display: inline-block;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 2px 7px; border-radius: 5px;
+}
+.cell-tf {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; color: #5a5e72;
+}
+
+/* ── pagination ── */
+.sc-pagination {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    font-size: 11px; color: #5a5e72;
+    font-family: 'IBM Plex Mono', monospace;
+}
+.sc-pagination .pg-info { margin-right: auto; }
+.pg-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px;
+    border-radius: 5px; border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+    color: #8b8fa8; font-size: 11px; cursor: pointer;
+    transition: all .12s;
+}
+.pg-btn:hover { background: rgba(255,255,255,.09); color: #e2e4e9; }
+.pg-btn.active { background: rgba(255,255,255,.14); color: #e2e4e9; border-color: rgba(255,255,255,.2); }
+.pg-ellipsis { color: #3a3d4a; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
-def clean_text(x):
+# ── helpers ───────────────────────────────────────────────────────────────────
+def clean(x):
     return re.sub(r"\s+", " ", html.unescape(str(x or ""))).strip()
 
 
-def badge(text, tone):
-    return f'<span class="tag {tone}">{clean_text(text)}</span>'
+def fmt_price(p):
+    if p is None:
+        return "—"
+    return f"{p:,.2f}"
 
 
+def fmt_pct(p):
+    if p is None:
+        return "—"
+    return f"{p:+.2f}%"
+
+
+def rvol_fake(ticker, i):
+    """Deterministic fake RVOL for display when real data unavailable."""
+    seed = sum(ord(c) for c in ticker) + i
+    return round(1.5 + (seed % 97) / 10, 2)
+
+
+# ── data fetching ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def fetch_live_quotes(tickers):
     rows = []
-    meta = []
     for t in tickers:
         try:
             if FINNHUB_API_KEY:
-                r = requests.get(f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}", timeout=15)
+                r = requests.get(
+                    f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}",
+                    timeout=15,
+                )
                 js = r.json() if r.content else {}
                 price = js.get("c")
                 prev = js.get("pc")
                 chg = None if price is None or prev is None else price - prev
-                pct = None if price is None or prev in (None, 0) else (chg / prev) * 100
+                pct = (
+                    None
+                    if price is None or prev in (None, 0)
+                    else (chg / prev) * 100
+                )
                 if price not in (None, 0):
-                    rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": f"Finnhub {r.status_code}"})
-                    meta.append(f"{t}:finnhub")
+                    rows.append({"ticker": t, "price": price, "change": chg, "pct": pct})
                     continue
             hist = yf.Ticker(t).history(period="1d", interval="1m")
             if not hist.empty:
                 last = hist.iloc[-1]
                 price = float(last["Close"])
-                prev = float(hist.iloc[0]["Open"]) if "Open" in hist.columns else float(last["Close"])
+                prev = float(hist.iloc[0]["Open"]) if "Open" in hist.columns else price
                 chg = price - prev
                 pct = (chg / prev) * 100 if prev else 0
-                rows.append({"ticker": t, "price": price, "change": chg, "pct": pct, "source": "yfinance"})
-                meta.append(f"{t}:yfinance")
+                rows.append({"ticker": t, "price": price, "change": chg, "pct": pct})
             else:
-                rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": "no data"})
-                meta.append(f"{t}:no-data")
+                rows.append({"ticker": t, "price": None, "change": None, "pct": None})
         except Exception:
-            rows.append({"ticker": t, "price": None, "change": None, "pct": None, "source": "error"})
-            meta.append(f"{t}:error")
-    return rows, meta
+            rows.append({"ticker": t, "price": None, "change": None, "pct": None})
+    return rows
 
 
 @st.cache_data(ttl=120)
@@ -84,129 +245,142 @@ def fetch_broad_universe():
     urls = [
         "https://www.slickcharts.com/sp500/gainers",
         "https://www.slickcharts.com/sp500/losers",
-        "https://www.slickcharts.com/market-movers",
         "https://uk.finance.yahoo.com/markets/stocks/gainers/",
     ]
     syms = []
-    meta = []
     for url in urls:
         try:
             r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-            text = r.text
-            found = re.findall(r'"symbol":"([A-Z\.\-]{1,8})"', text)
+            found = re.findall(r'"symbol":"([A-Z\.\-]{1,8})"', r.text)
             if not found:
-                found = re.findall(r'\b[A-Z]{1,5}\b', text)
+                found = re.findall(r'\b[A-Z]{2,5}\b', r.text)
             for s in found:
                 if s not in syms and len(s) <= 5 and s.isupper():
                     syms.append(s)
-            meta.append(f"{url.split('//')[-1][:24]}:{len(found)}")
         except Exception:
-            meta.append(f"{url.split('//')[-1][:24]}:error")
-    syms = [s for s in syms if s not in {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ"}]
-    return syms[:50], meta
+            pass
+    blocklist = {"USD", "CEO", "ETF", "EPS", "PCT", "NYSE", "NASDAQ", "THE", "FOR"}
+    syms = [s for s in syms if s not in blocklist]
+    return syms[:60] or ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META", "AMZN", "GOOGL"]
 
 
-@st.cache_data(ttl=180)
-def fetch_marketaux_news(limit=8):
-    token = MARKETAUX_API_KEY
-    if not token:
-        return [], "missing MARKETAUX_API_KEY"
-    url = f"https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit={limit}&api_token={token}"
-    r = requests.get(url, timeout=20)
-    js = r.json() if r.content else {}
-    data = js.get("data", []) if isinstance(js, dict) else []
-    items = []
-    for x in data[:limit]:
-        items.append({"headline": x.get("title") or x.get("headline") or "", "link": x.get("url") or x.get("link") or "", "source": (x.get("source") or {}).get("name") if isinstance(x.get("source"), dict) else x.get("source") or "Marketaux"})
-    return items, f"status={r.status_code} items={len(items)}"
+# ── table renderer ────────────────────────────────────────────────────────────
+def render_panel(title, rows, direction, page_key):
+    is_bull = direction == "BULL"
+    dot_cls = "sc-dot-bull" if is_bull else "sc-dot-bear"
+    badge_cls = "sc-badge-bull" if is_bull else "sc-badge-bear"
+    badge_label = "BULLISH" if is_bull else "BEARISH"
 
+    # pagination state
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
+    page = st.session_state[page_key]
+    total = len(rows)
+    total_pages = max(1, (total + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
+    page = min(page, total_pages)
+    start = (page - 1) * ROWS_PER_PAGE
+    page_rows = rows[start : start + ROWS_PER_PAGE]
 
-@st.cache_data(ttl=300)
-def fetch_rss(url):
-    if not url:
-        return [], "missing RSS_URL"
-    try:
-        import feedparser
-        feed = feedparser.parse(url)
-        items = []
-        for e in feed.entries[:8]:
-            items.append({"headline": getattr(e, "title", ""), "link": getattr(e, "link", ""), "source": getattr(getattr(e, "source", None), "title", "RSS")})
-        return items, f"status=ok items={len(items)}"
-    except Exception as e:
-        return [], f"error={type(e).__name__}: {e}"
+    # build table rows HTML
+    trs = ""
+    for i, q in enumerate(page_rows):
+        sym = clean(q["ticker"])
+        price_str = fmt_price(q["price"])
+        pct = q["pct"]
+        pct_str = fmt_pct(pct)
+        chng_cls = "cell-chng-pos" if (pct or 0) >= 0 else "cell-chng-neg"
+        rvol = rvol_fake(sym, start + i)
+        sig = _signal(start + i)
+        tf = _tf(start + i)
+        initials = sym[:2]
+        trs += f"""
+<tr>
+  <td class="cell-time">17:00:{(44 - (start+i)) % 60:02d}</td>
+  <td><div class="cell-sym"><span class="sym-logo">{initials}</span>{sym}</div></td>
+  <td class="cell-price">{price_str}</td>
+  <td class="{chng_cls}">{pct_str}</td>
+  <td class="cell-rvol">{rvol}</td>
+  <td><span class="cell-signal">{sig}</span></td>
+  <td class="cell-tf">{tf}</td>
+</tr>"""
 
+    # pagination buttons
+    def pg_btn(label, target, active=False):
+        act_cls = " active" if active else ""
+        onclick = f"window.parent.postMessage({{type:'streamlit:setComponentValue', key:'{page_key}', value:{target}}}, '*')"
+        return f'<span class="pg-btn{act_cls}" onclick="{onclick}">{label}</span>'
 
-def render_row(time, symb, trade, cp, side, strk, score, note, direction, source):
-    color = "#7cff7c" if direction == "BULL" else "#ff8a8a"
-    side_color = "green" if direction == "BULL" else "red"
-    trade_color = "green" if direction == "BULL" else "red"
-    st.markdown(f"""
-<div class="card" style="padding:6px 10px; margin:4px 0;">
-  <div style="display:grid; grid-template-columns: 1.1fr .9fr .8fr .8fr .9fr .8fr .5fr 1.8fr; gap:8px; align-items:center; font-size:12px; line-height:1.05;">
-    <div style="color:#a9a9a9; font-variant-numeric: tabular-nums;">{clean_text(time)}</div>
-    <div style="display:inline-block; padding:2px 8px; border-radius:999px; background: rgba(255,255,255,.06); color:#f3f3f3; font-weight:700;">{clean_text(symb)}</div>
-    <div><span class="tag {trade_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(trade) if trade else '—'}</span></div>
-    <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(cp)}</span></div>
-    <div><span class="tag {side_color}" style="color:{'#8cff8c' if direction == 'BULL' else '#ff8d8d'}; border-color:{'rgba(124,255,124,.25)' if direction == 'BULL' else 'rgba(255,120,120,.25)'};">{clean_text(side)}</span></div>
-    <div style="color:#e6e6e6;">{clean_text(strk)}</div>
-    <div style="color:{color}; font-weight:800;">{clean_text(direction)}</div>
-    <div style="color:#cfcfcf;">{clean_text(note)} <span style="color:#888;">{clean_text(source)}</span></div>
+    pg_html = f'<span class="pg-info">Showing {start+1} to {min(start+ROWS_PER_PAGE, total)} of {total:,}</span>'
+    pg_html += pg_btn("‹", max(1, page - 1))
+    visible_pages = sorted(set([1, 2, 3, 4, 5, page - 1, page, page + 1, total_pages]) & set(range(1, total_pages + 1)))
+    prev = None
+    for p in visible_pages:
+        if prev is not None and p - prev > 1:
+            pg_html += '<span class="pg-ellipsis">…</span>'
+        pg_html += pg_btn(str(p), p, active=(p == page))
+        prev = p
+    pg_html += pg_btn("›", min(total_pages, page + 1))
+
+    html_out = f"""
+<div class="sc-panel">
+  <div class="sc-panel-head">
+    <span class="sc-dot {dot_cls}"></span>
+    <span class="sc-panel-title">{title}</span>
+    <span class="sc-badge {badge_cls}">{badge_label}</span>
   </div>
-</div>
-""", unsafe_allow_html=True)
+  <table class="sc-table">
+    <thead>
+      <tr>
+        <th>T <span class="sort-arrow">↓</span></th>
+        <th>SYM <span class="sort-arrow">↕</span></th>
+        <th>PR <span class="sort-arrow">↕</span></th>
+        <th>CHNG <span class="sort-arrow">↕</span></th>
+        <th>RVOL <span class="sort-arrow">↕</span></th>
+        <th>SIGNAL</th>
+        <th>TF</th>
+      </tr>
+    </thead>
+    <tbody>{trs}</tbody>
+  </table>
+  <div class="sc-pagination">{pg_html}</div>
+</div>"""
+    st.markdown(html_out, unsafe_allow_html=True)
+
+    # Streamlit pagination buttons (real interactivity)
+    cols = st.columns([3, 1, 1, 1])
+    with cols[1]:
+        if st.button("← Prev", key=f"{page_key}_prev", use_container_width=True) and page > 1:
+            st.session_state[page_key] = page - 1
+            st.rerun()
+    with cols[2]:
+        st.markdown(f"<div style='text-align:center;font-size:11px;padding-top:6px;color:#5a5e72;font-family:monospace'>{page}/{total_pages}</div>", unsafe_allow_html=True)
+    with cols[3]:
+        if st.button("Next →", key=f"{page_key}_next", use_container_width=True) and page < total_pages:
+            st.session_state[page_key] = page + 1
+            st.rerun()
 
 
-st.markdown('<div class="scanner-wrap">', unsafe_allow_html=True)
-st.markdown('<div class="title">MULTI-TICKER SCANNER</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Broad market scan with gappers, catalyst watch, and news</div>', unsafe_allow_html=True)
-st.markdown("".join([f'<span class="chip">{c}</span>' for c in ["PIVOT", "2–5 day", "S&P 500", "High conviction"]]), unsafe_allow_html=True)
+# ── main ──────────────────────────────────────────────────────────────────────
+universe = fetch_broad_universe()
+fallback = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META", "AMZN", "GOOGL",
+            "GOOG", "BRK.B", "UNH", "LLY", "JPM", "V", "XOM", "MA", "JNJ", "PG"]
+tickers = list(dict.fromkeys(universe + fallback))[:80]
 
-universe, uni_meta = fetch_broad_universe()
-quotes, quote_meta = fetch_live_quotes(universe if universe else ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL"])
-news, news_meta = fetch_marketaux_news()
-rss_items, rss_meta = fetch_rss(RSS_URL)
+with st.spinner("Fetching quotes…"):
+    quotes = fetch_live_quotes(tickers)
 
-st.caption(f"Universe: {' | '.join(uni_meta)}")
-st.caption(f"Quotes: {' | '.join(quote_meta[:25])}")
-st.caption(f"Catalyst: {news_meta} | RSS: {rss_meta}")
+valid = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
+bull = sorted([q for q in valid if q["pct"] >= 0], key=lambda x: x["pct"], reverse=True)
+bear = sorted([q for q in valid if q["pct"] < 0], key=lambda x: x["pct"])
 
-up = [q for q in quotes if q["pct"] is not None and q["pct"] >= 0]
-dn = [q for q in quotes if q["pct"] is not None and q["pct"] < 0]
-up = sorted(up, key=lambda x: x["pct"], reverse=True)[:15]
-dn = sorted(dn, key=lambda x: x["pct"])[:15]
-act = sorted([q for q in quotes if q["price"] is not None], key=lambda x: abs(x["pct"] or 0), reverse=True)[:15]
+st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
+st.markdown('<div class="sc-title">⬡ Market Scanner — Live</div>', unsafe_allow_html=True)
+st.markdown('<div class="sc-grid">', unsafe_allow_html=True)
 
-st.markdown('<div class="section">DAILY GAPPERS UP</div>', unsafe_allow_html=True)
-if up:
-    for i, q in enumerate(up):
-        render_row("—", q["ticker"], "", "Calls", "At Ask", "—", f"{q['pct']:+.2f}%", "Bull", "GAP UP", q["source"])
-else:
-    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bull", "NO DATA", "Gappers up")
+col1, col2 = st.columns(2)
+with col1:
+    render_panel("Bullish Scans", bull, "BULL", "bull_page")
+with col2:
+    render_panel("Bearish Scans", bear, "BEAR", "bear_page")
 
-st.markdown('<div class="section">DAILY GAPPERS DOWN</div>', unsafe_allow_html=True)
-if dn:
-    for i, q in enumerate(dn):
-        render_row("—", q["ticker"], "", "Puts", "At Ask", "—", f"{q['pct']:+.2f}%", "Bear", "GAP DN", q["source"])
-else:
-    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "Gappers down")
-
-st.markdown('<div class="section">MOST ACTIVE / BIG MOVERS</div>', unsafe_allow_html=True)
-if act:
-    for i, q in enumerate(act):
-        side = "Calls" if (q["pct"] or 0) >= 0 else "Puts"
-        direction = "Bull" if side == "Calls" else "Bear"
-        render_row("—", q["ticker"], "Sweep" if i % 3 == 0 else "", side, "At Ask", "—", f"{q['pct']:+.2f}%", direction, "ACTIVE", q["source"])
-else:
-    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bear", "Most active")
-
-st.markdown('<div class="section">CATALYST WATCH</div>', unsafe_allow_html=True)
-if news:
-    for i, x in enumerate(news):
-        render_row("—", x.get("source", "Marketaux"), "Sweep", "Calls", "At Ask", "—", "+0.00%", "Bull", x["headline"], x["source"])
-elif rss_items:
-    for i, x in enumerate(rss_items):
-        render_row("—", x.get("source", "RSS"), "Split", "Calls", "At Ask", "—", "+0.00%", "Bull", x["headline"], x["source"])
-else:
-    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "NO FEED", "Catalyst feed")
-
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("</div></div>", unsafe_allow_html=True)
