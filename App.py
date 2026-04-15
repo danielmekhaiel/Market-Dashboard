@@ -18,20 +18,20 @@ st.markdown("""
 .title { font-family: monospace; color: #7CFF7C; font-size: 34px; letter-spacing: 2px; margin-bottom: 0; }
 .subtitle { color: #7fd47f; font-size: 12px; margin-top: -6px; margin-bottom: 18px; }
 .chip { display:inline-block; border:1px solid rgba(124,255,124,.25); color:#9df79d; padding:4px 10px; border-radius:999px; margin-right:6px; font-size:11px; background: rgba(10,25,10,.7); }
-.card { background: linear-gradient(180deg, rgba(6,30,10,.98), rgba(3,12,6,.98)); border:1px solid rgba(124,255,124,.14); border-radius:14px; padding:14px 16px; margin: 12px 0; box-shadow: 0 0 0 1px rgba(0,0,0,.2), 0 14px 40px rgba(0,0,0,.35); }
-.ticker { color:#8bff8b; font-size: 22px; font-weight:700; letter-spacing:.5px; }
+.card { background: #0a0a0a; border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:4px 8px; margin: 3px 0; box-shadow: none; }
+.ticker { color:#f0f0f0; font-size: 15px; font-weight:700; letter-spacing:.3px; }
 .company { color:#a8d9a8; font-size: 12px; margin-top: 2px; }
-.score { text-align:right; font-size:28px; font-weight:800; }
+.score { text-align:right; font-size:18px; font-weight:800; }
 .score-label { text-align:right; color:#92c992; font-size:11px; }
 .tag { display:inline-block; padding:3px 8px; margin: 2px 5px 2px 0; border-radius: 999px; font-size: 11px; border:1px solid rgba(124,255,124,.18); background: rgba(6,20,8,.85); color:#c2efc2; }
 .tag.green { color:#8cff8c; border-color: rgba(124,255,124,.25); }
 .tag.red { color:#ff8d8d; border-color: rgba(255,120,120,.25); }
 .tag.amber { color:#ffd27a; border-color: rgba(255,210,122,.25); }
-.headline { color:#e6ffe6; font-size: 13px; line-height: 1.35; margin-top: 6px; }
+.headline { color:#e6ffe6; font-size: 12px; line-height: 1.2; margin-top: 2px; }
 .source { color:#76b876; font-size: 11px; margin-top: 6px; }
 a { color:#8cff8c !important; }
 .small { color:#89b989; font-size: 11px; }
-.section { margin-top: 18px; color:#78d878; font-family: monospace; font-size:14px; }
+.section { margin-top: 8px; color:#cfcfcf; font-family: monospace; font-size:11px; letter-spacing: .8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -136,27 +136,21 @@ def fetch_rss(url):
         return [], f"error={type(e).__name__}: {e}"
 
 
-def render_card(ticker, company, score, action, rating, pt, tags, headline, link, source, price=None, change=None, pct=None):
-    color = "#7cff7c" if score >= 60 else "#ffd27a" if score >= 35 else "#ff8a8a"
-    tag_html = "".join([badge(t, c) for t, c in tags])
-    link_html = f'<a href="{html.escape(link)}" target="_blank">{html.escape(link)}</a>' if link else ""
-    price_line = "—" if price is None else f"${price:,.2f}"
-    chg_line = "—" if change is None else f"{change:+.2f} ({pct:+.2f}%)"
+def render_row(time, symb, trade, cp, side, strk, score, note, direction, source):
+    color = "#7cff7c" if direction == "BULL" else "#ff8a8a"
+    side_color = "green" if side == "Calls" else "red"
+    trade_color = "amber" if trade != "" else "gray"
     st.markdown(f"""
-<div class="card">
-  <div style="display:flex; gap:16px; align-items:flex-start; justify-content:space-between;">
-    <div style="flex:1 1 auto; min-width:0;">
-      <div class="ticker">{clean_text(ticker)} <span class="small">{price_line} | {chg_line}</span></div>
-      <div class="company">{clean_text(company)}</div>
-      <div style="margin-top:8px;">{tag_html}</div>
-      <div class="headline">{clean_text(headline)}</div>
-      <div class="source">{clean_text(source)} {link_html}</div>
-    </div>
-    <div style="min-width:120px;">
-      <div class="score" style="color:{color};">+{score}</div>
-      <div class="score-label">{clean_text(action)} | {clean_text(rating)}</div>
-      <div class="score-label">PT {clean_text(pt)}</div>
-    </div>
+<div class="card" style="padding:6px 10px; margin:4px 0;">
+  <div style="display:grid; grid-template-columns: 1.1fr .9fr .8fr .8fr .9fr .8fr .5fr 1.8fr; gap:8px; align-items:center; font-size:12px; line-height:1.05;">
+    <div style="color:#a9a9a9;">{clean_text(time)}</div>
+    <div style="color:#f3f3f3; font-weight:700;">{clean_text(symb)}</div>
+    <div><span class="tag {trade_color}">{clean_text(trade) if trade else '—'}</span></div>
+    <div><span class="tag {side_color}">{clean_text(cp)}</span></div>
+    <div><span class="tag {side_color}">{clean_text(side)}</span></div>
+    <div style="color:#e6e6e6;">{clean_text(strk)}</div>
+    <div style="color:{color}; font-weight:700;">{clean_text(direction)}</div>
+    <div style="color:#cfcfcf;">{clean_text(note)} <span style="color:#888;">{clean_text(source)}</span></div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -185,33 +179,34 @@ act = sorted([q for q in quotes if q["price"] is not None], key=lambda x: abs(x[
 st.markdown('<div class="section">DAILY GAPPERS UP</div>', unsafe_allow_html=True)
 if up:
     for i, q in enumerate(up):
-        render_card(q["ticker"], "Market mover", 90 - i * 2, "GAP UP", "QUOTE", "—", [("GAP UP", "green"), (q["source"], "amber")], "Broad market gainer", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+        render_row("—", q["ticker"], "", "Calls", "At Ask", "—", f"{q['pct']:+.2f}%", "Bull", "GAP UP", q["source"])
 else:
-    render_card("—", "No gainers", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No positive movers found.", "", "Gappers up")
+    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bull", "NO DATA", "Gappers up")
 
 st.markdown('<div class="section">DAILY GAPPERS DOWN</div>', unsafe_allow_html=True)
 if dn:
     for i, q in enumerate(dn):
-        render_card(q["ticker"], "Market mover", 90 - i * 2, "GAP DN", "QUOTE", "—", [("GAP DN", "red"), (q["source"], "amber")], "Broad market loser", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+        render_row("—", q["ticker"], "", "Puts", "At Ask", "—", f"{q['pct']:+.2f}%", "Bear", "GAP DN", q["source"])
 else:
-    render_card("—", "No losers", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No negative movers found.", "", "Gappers down")
+    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "NO DATA", "Gappers down")
 
 st.markdown('<div class="section">MOST ACTIVE / BIG MOVERS</div>', unsafe_allow_html=True)
 if act:
     for i, q in enumerate(act):
-        tone = "green" if (q["pct"] or 0) >= 0 else "red"
-        render_card(q["ticker"], "Market mover", 85 - i * 2, "ACTIVE", "QUOTE", "—", [("ACTIVE", "amber"), (q["source"], tone)], "High movement name", "", f"Source: {q['source']}", q["price"], q["change"], q["pct"])
+        side = "Calls" if (q["pct"] or 0) >= 0 else "Puts"
+        direction = "Bull" if side == "Calls" else "Bear"
+        render_row("—", q["ticker"], "Sweep" if i % 3 == 0 else "", side, "At Ask", "—", f"{q['pct']:+.2f}%", direction, "ACTIVE", q["source"])
 else:
-    render_card("—", "No active names", 0, "N/A", "N/A", "—", [("NO DATA", "red")], "No active movers found.", "", "Most active")
+    render_row("—", "—", "", "Calls", "At Ask", "—", "0.00%", "Bear", "NO DATA", "Most active")
 
 st.markdown('<div class="section">CATALYST WATCH</div>', unsafe_allow_html=True)
 if news:
     for i, x in enumerate(news):
-        render_card("NEWS", x.get("source", "Marketaux"), 80 - i * 6, "LIVE", "N/A", "—", [("LIVE", "green"), (x["source"] or "NEWS", "amber")], x["headline"], x["link"], x["source"])
+        render_row("—", x.get("source", "Marketaux"), "Sweep", "Calls", "At Ask", "—", "+0.00%", "Bull", x["headline"], x["source"])
 elif rss_items:
     for i, x in enumerate(rss_items):
-        render_card("RSS", x.get("source", "RSS"), 70 - i * 5, "LIVE", "N/A", "—", [("RSS", "amber"), ("FALLBACK", "green")], x["headline"], x["link"], x["source"])
+        render_row("—", x.get("source", "RSS"), "Split", "Calls", "At Ask", "—", "+0.00%", "Bull", x["headline"], x["source"])
 else:
-    render_card("—", "Live catalyst feed unavailable", 0, "NEUTRAL", "Options play: —", "—", [("NO FEED", "red")], "Connect a news API or RSS source.", "https://www.marketaux.com/", "Catalyst feed")
+    render_row("—", "—", "", "Puts", "At Ask", "—", "0.00%", "Bear", "NO FEED", "Catalyst feed")
 
 st.markdown('</div>', unsafe_allow_html=True)
