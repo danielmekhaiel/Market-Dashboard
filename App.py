@@ -27,56 +27,97 @@ st.markdown("""
 .stApp { background: #0d0f10; color: #e2e4e9; }
 *, *::before, *::after { box-sizing: border-box; }
 
-.sc-wrap { max-width: 1400px; margin: 0 auto; padding: 24px 12px 60px; font-family: 'DM Sans', sans-serif; }
+.sc-wrap { max-width: 1440px; margin: 0 auto; padding: 0 16px 60px; font-family: 'DM Sans', sans-serif; }
 
-.sc-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
-.sc-title { font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 600; color: #e8eaf0; letter-spacing: 1px; }
-.sc-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4a4e62; letter-spacing: 1.5px; text-transform: uppercase; }
-.sc-timestamp { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4a4e62; }
-
-.sc-section {
-    font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600;
-    letter-spacing: 2px; color: #4a4e62; text-transform: uppercase;
-    margin: 28px 0 10px; padding-left: 2px;
-    display: flex; align-items: center; gap: 10px;
+/* header */
+.sc-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 4px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+    margin-bottom: 4px;
 }
-.sc-section::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.06); }
+.sc-logo {
+    width: 30px; height: 30px; border-radius: 7px;
+    background: linear-gradient(135deg, #4f46e5, #818cf8);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+}
+.sc-title { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700; color: #e8eaf0; letter-spacing: 2.5px; text-transform: uppercase; }
+.sc-sub { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #3d4158; letter-spacing: 1.5px; text-transform: uppercase; }
+.sc-divider { width: 1px; height: 18px; background: rgba(255,255,255,.07); margin: 0 2px; }
+.sc-timestamp { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #3d4158; background: rgba(255,255,255,.03); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,.05); }
 
-.sc-panel { background: #13151a; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; overflow: hidden; }
+/* market summary bar */
+.sc-mkt-bar {
+    display: flex; gap: 0; margin: 10px 0 2px;
+    background: #0f1117; border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px; overflow: hidden;
+}
+.sc-mkt-item {
+    flex: 1; padding: 10px 16px; border-right: 1px solid rgba(255,255,255,.05);
+    display: flex; flex-direction: column; gap: 3px;
+}
+.sc-mkt-item:last-child { border-right: none; }
+.sc-mkt-label { font-family: 'IBM Plex Mono', monospace; font-size: 8px; letter-spacing: 1.5px; color: #3d4158; text-transform: uppercase; }
+.sc-mkt-val { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: #e8eaf0; }
+.sc-mkt-chg-pos { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #22c55e; }
+.sc-mkt-chg-neg { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #ef4444; }
+
+/* section label */
+.sc-section {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700;
+    letter-spacing: 2.5px; color: #3d4158; text-transform: uppercase;
+    margin: 22px 0 8px; padding-left: 2px;
+    display: flex; align-items: center; gap: 12px;
+}
+.sc-section::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.04); }
+
+/* panel */
+.sc-panel {
+    background: #0f1117;
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 2px 20px rgba(0,0,0,.35);
+}
 .sc-panel-bull   { border-top: 2px solid #16a34a; }
 .sc-panel-bear   { border-top: 2px solid #dc2626; }
 .sc-panel-gap-up { border-top: 2px solid #22c55e; }
 .sc-panel-gap-dn { border-top: 2px solid #ef4444; }
 .sc-panel-news   { border-top: 2px solid #6366f1; }
 
+/* panel header */
 .sc-panel-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 12px 16px 10px; border-bottom: 1px solid rgba(255,255,255,.05);
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    background: rgba(0,0,0,.15);
 }
-.sc-panel-title { font-size: 13px; font-weight: 600; color: #e8eaf0; }
+.sc-panel-title { font-size: 11px; font-weight: 700; color: #c8cad6; letter-spacing: .8px; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; }
 .sc-count {
     margin-left: auto; font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; padding: 1px 7px; border-radius: 999px;
-    font-weight: 600; letter-spacing: .5px;
+    font-size: 10px; padding: 2px 8px; border-radius: 999px;
+    font-weight: 700; letter-spacing: .5px;
 }
-.sc-count-bull   { background: rgba(22,163,74,.15);  color: #4ade80; border: 1px solid rgba(22,163,74,.3); }
-.sc-count-bear   { background: rgba(220,38,38,.15);  color: #f87171; border: 1px solid rgba(220,38,38,.3); }
-.sc-count-gap-up { background: rgba(34,197,94,.12);  color: #86efac; border: 1px solid rgba(34,197,94,.25); }
-.sc-count-gap-dn { background: rgba(239,68,68,.12);  color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
-.sc-count-news   { background: rgba(99,102,241,.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,.3); }
+.sc-count-bull   { background: rgba(22,163,74,.1);   color: #4ade80; border: 1px solid rgba(22,163,74,.2); }
+.sc-count-bear   { background: rgba(220,38,38,.1);   color: #f87171; border: 1px solid rgba(220,38,38,.2); }
+.sc-count-gap-up { background: rgba(34,197,94,.08);  color: #86efac; border: 1px solid rgba(34,197,94,.18); }
+.sc-count-gap-dn { background: rgba(239,68,68,.08);  color: #fca5a5; border: 1px solid rgba(239,68,68,.18); }
+.sc-count-news   { background: rgba(99,102,241,.1);  color: #a5b4fc; border: 1px solid rgba(99,102,241,.2); }
 
+/* table */
 .sc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .sc-table thead th {
-    padding: 6px 12px; text-align: left;
-    font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 600;
-    letter-spacing: 1px; color: #3d4158; border-bottom: 1px solid rgba(255,255,255,.05);
-    white-space: nowrap;
+    padding: 7px 14px; text-align: left;
+    font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700;
+    letter-spacing: 1.5px; color: #2e3148; border-bottom: 1px solid rgba(255,255,255,.04);
+    white-space: nowrap; text-transform: uppercase; background: rgba(0,0,0,.2);
 }
 .sc-table thead th.r { text-align: right; }
-.sc-table tbody tr { border-bottom: 1px solid rgba(255,255,255,.035); transition: background .1s; }
+.sc-table tbody tr { border-bottom: 1px solid rgba(255,255,255,.025); transition: background .15s; }
 .sc-table tbody tr:last-child { border-bottom: none; }
-.sc-table tbody tr:hover { background: rgba(255,255,255,.03); }
-.sc-table td { padding: 7px 12px; vertical-align: middle; white-space: nowrap; }
+.sc-table tbody tr:hover { background: rgba(99,102,241,.04); }
+.sc-table td { padding: 8px 14px; vertical-align: middle; white-space: nowrap; }
 
 .c-sym {
     display: flex; align-items: center; gap: 7px;
@@ -112,19 +153,27 @@ st.markdown("""
 .ticker-btn-row:hover .c-sym { color: #818cf8 !important; }
 
 /* news */
-.news-row { padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,.04); }
+.news-row {
+    padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,.05);
+    display: flex; gap: 12px; align-items: flex-start;
+}
 .news-row:last-child { border-bottom: none; }
-.news-row:hover { background: rgba(255,255,255,.02); }
+.news-row:hover { background: rgba(255,255,255,.025); }
+.news-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #6366f1;
+    flex-shrink: 0; margin-top: 5px;
+}
+.news-body { flex: 1; min-width: 0; }
 .news-ticker {
     display: inline-block; font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
-    margin-right: 5px; background: rgba(99,102,241,.15); color: #a5b4fc;
-    border: 1px solid rgba(99,102,241,.25); vertical-align: middle;
+    font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+    margin-right: 5px; margin-bottom: 4px; background: rgba(99,102,241,.18); color: #a5b4fc;
+    border: 1px solid rgba(99,102,241,.3); vertical-align: middle; letter-spacing: .5px;
 }
-.news-headline { font-size: 12px; color: #c8cad6; line-height: 1.45; }
-.news-meta { font-size: 10px; color: #3d4158; margin-top: 3px; font-family: 'IBM Plex Mono', monospace; }
-a.news-link { color: #818cf8 !important; text-decoration: none; }
-a.news-link:hover { color: #a5b4fc !important; text-decoration: underline; }
+.news-headline { font-size: 13px; color: #f0f1f5; line-height: 1.5; font-weight: 500; }
+.news-meta { font-size: 10px; color: #4a4e62; margin-top: 4px; font-family: 'IBM Plex Mono', monospace; letter-spacing: .3px; }
+a.news-link { color: #f0f1f5 !important; text-decoration: none; }
+a.news-link:hover { color: #a5b4fc !important; }
 
 .sc-empty {
     padding: 28px 16px; text-align: center;
@@ -670,9 +719,15 @@ def render_news_panel(news_items):
             link = item.get("link", "")
             h_html = f'<a class="news-link" href="{link}" target="_blank">{h}</a>' if link else h
             pub = item.get("published", "")
+            src = clean(item.get("source", ""))
+            meta = f"{src}{' · ' + pub if pub else ''}"
             rows_html += f"""<div class="news-row">
-  <div>{tickers_html}<span class="news-headline">{h_html}</span></div>
-  <div class="news-meta">{clean(item.get('source',''))}{' · ' + pub if pub else ''}</div>
+  <div class="news-dot"></div>
+  <div class="news-body">
+    <div>{tickers_html}</div>
+    <div class="news-headline">{h_html}</div>
+    <div class="news-meta">{meta}</div>
+  </div>
 </div>"""
         body = rows_html
 
@@ -706,13 +761,52 @@ gap_valid = [q for q in valid if q.get("gap_pct") is not None]
 gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
 gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
 
+# ── market index summary bar ──────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def fetch_index_bar():
+    indices = [("SPY","S&P 500"),("QQQ","NASDAQ"),("IWM","RUSSELL 2K"),("GLD","GOLD"),("TLT","BONDS")]
+    results = []
+    for sym, label in indices:
+        try:
+            tk = yf.Ticker(sym)
+            hist = tk.history(period="2d", interval="1d")
+            if len(hist) >= 2:
+                close = float(hist.iloc[-1]["Close"])
+                prev  = float(hist.iloc[-2]["Close"])
+                pct   = (close - prev) / prev * 100
+                results.append((label, close, pct))
+            elif len(hist) == 1:
+                results.append((label, float(hist.iloc[-1]["Close"]), 0.0))
+        except Exception:
+            pass
+    return results
+
+index_data = fetch_index_bar()
+
+def _mkt_item(label, val, pct):
+    chg_cls = "sc-mkt-chg-pos" if pct >= 0 else "sc-mkt-chg-neg"
+    arrow   = "▲" if pct >= 0 else "▼"
+    return f"""<div class="sc-mkt-item">
+  <div class="sc-mkt-label">{label}</div>
+  <div class="sc-mkt-val">{val:,.2f}</div>
+  <div class="{chg_cls}">{arrow} {abs(pct):.2f}%</div>
+</div>"""
+
+mkt_bar_html = "".join(_mkt_item(l, v, p) for l, v, p in index_data)
+
 # ── render ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 st.markdown(f"""<div class="sc-header">
-  <span class="sc-title">MARKET SCANNER</span>
-  <span class="sc-sub">Live · S&amp;P 500 + Broad Market</span>
-  <span class="sc-timestamp">{now_str}</span>
-</div>""", unsafe_allow_html=True)
+  <div class="sc-logo">MS</div>
+  <div>
+    <div class="sc-title">Market Scanner</div>
+    <div class="sc-sub">Live · S&amp;P 500 + Broad Market</div>
+  </div>
+  <div class="sc-divider"></div>
+  <span class="sc-timestamp">🕐 {now_str}</span>
+</div>
+<div class="sc-mkt-bar">{mkt_bar_html}</div>
+""", unsafe_allow_html=True)
 
 # Ticker detail panel (shown at top when a ticker is selected)
 if st.session_state.get("selected_ticker"):
