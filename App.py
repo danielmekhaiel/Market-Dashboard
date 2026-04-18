@@ -12,6 +12,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Auto-refresh every 30 seconds
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=30_000, key="autorefresh")
+except ImportError:
+    st.warning("Install streamlit-autorefresh for live updates: `pip install streamlit-autorefresh`")
+
 FINNHUB_API_KEY   = st.secrets.get("FINNHUB_API_KEY",   os.getenv("FINNHUB_API_KEY",   ""))
 MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
 RSS_URL           = st.secrets.get("RSS_URL",            os.getenv("RSS_URL",            ""))
@@ -388,7 +395,7 @@ def fetch_ticker_news(ticker):
         return []
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def fetch_universe():
     urls = [
         "https://www.slickcharts.com/sp500/gainers",
