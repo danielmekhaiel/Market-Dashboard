@@ -1118,28 +1118,27 @@ def fetch_earnings_calendar():
     items = []
     today = datetime.now().date()
 
-    # Finnhub earnings calendar
+    # ── 1. Finnhub (if key provided) ─────────────────────────────────────────
     if FINNHUB_API_KEY:
         try:
             from_date = today.strftime("%Y-%m-%d")
-            to_date   = datetime(today.year, today.month + (1 if today.month < 12 else 0), 1).strftime("%Y-%m-%d") if today.month < 12 else f"{today.year+1}-01-01"
+            to_date   = (datetime(today.year, today.month + 1, 1) if today.month < 12
+                         else datetime(today.year + 1, 1, 1)).strftime("%Y-%m-%d")
             r = requests.get(
                 f"https://finnhub.io/api/v1/calendar/earnings?from={from_date}&to={to_date}&token={FINNHUB_API_KEY}",
                 timeout=15
             )
             js = r.json() if r.content else {}
-            for x in (js.get("earningsCalendar") or [])[:40]:
+            for x in (js.get("earningsCalendar") or [])[:60]:
                 sym     = str(x.get("symbol","")).upper()
                 date_s  = str(x.get("date",""))
                 hour    = str(x.get("hour","")).lower()
                 eps_est = x.get("epsEstimate")
-                rev_est = x.get("revenueEstimate")
                 if sym and date_s:
                     items.append({
                         "sym": sym, "date": date_s,
                         "timing": "BMO" if "before" in hour else ("AMC" if "after" in hour else "—"),
                         "eps_est": f"${eps_est:.2f}" if eps_est else "—",
-                        "rev_est": fmt_mktcap(rev_est) if rev_est else "—",
                         "type": "earnings",
                     })
             if items:
@@ -1147,56 +1146,179 @@ def fetch_earnings_calendar():
         except Exception:
             pass
 
-    # yfinance fallback for known big names
+    # ── 2. yfinance — try multiple methods ───────────────────────────────────
     watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","JPM",
-                 "NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","COIN","PLTR"]
+                 "NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","COIN","PLTR",
+                 "UBER","SNAP","SHOP","RBLX","SPOT","ARM","SMCI","MU","QCOM","AVGO"]
     for sym in watchlist:
         try:
             tk   = yf.Ticker(sym)
             info = tk.info or {}
-            cal  = tk.calendar
-            # yfinance returns dict in newer versions, DataFrame in older
-            cal_dict = {}
-            if cal is not None:
-                if isinstance(cal, dict):
-                    cal_dict = cal
-                else:
+            date_val = None
+
+            # Method A: info dict keys (works in most yfinance versions)
+            for key in ("earningsDate", "earningsTimestamp", "nextEarningsDate"):
+                raw = info.get(key)
+                if raw:
                     try:
-                        if not cal.empty:
-                            cal_dict = cal.to_dict()
+                        if isinstance(raw, (int, float)):
+                            date_val = datetime.fromtimestamp(raw).date()
+                        elif isinstance(raw, str):
+                            date_val = datetime.strptime(raw[:10], "%Y-%m-%d").date()
+                        elif hasattr(raw, "date"):
+                            date_val = raw.date()
+                        if date_val:
+                            break
                     except Exception:
-                        pass
-            ed = cal_dict.get("Earnings Date")
-            if ed is not None:
-                if not hasattr(ed, '__iter__') or isinstance(ed, str):
-                    ed = [ed]
-                ed = list(ed)
-                if len(ed) > 0:
-                    date_val = ed[0]
-                    if hasattr(date_val, "date"):
-                        date_val = date_val.date()
-                    if str(date_val) >= str(today):
-                        eps_est = info.get("forwardEps")
-                        rev_est = info.get("revenueEstimate") or info.get("totalRevenue")
-                        items.append({
-                            "sym": sym, "date": str(date_val),
-                            "timing": "—",
-                            "eps_est": f"${eps_est:.2f}" if eps_est else "—",
-                            "rev_est": fmt_mktcap(rev_est) if rev_est else "—",
-                            "type": "earnings",
-                        })
+                        continue
+
+            # Method B: tk.calendar (dict or DataFrame depending on version)
+            if not date_val:
+                try:
+                    cal = tk.calendar
+                    if isinstance(cal, dict):
+                        # Newer yfinance — flat dict
+                        for key in ("Earnings Date", "earningsDate", "Earnings Dates"):
+                            val = cal.get(key)
+                            if val is not None:
+                                if isinstance(val, (list, tuple)) and len(val) > 0:
+                                    val = val[0]
+                                if hasattr(val, "date"):
+                                    date_val = val.date()
+                                elif isinstance(val, str):
+                                    date_val = datetime.strptime(val[:10], "%Y-%m-%d").date()
+                                elif isinstance(val, (int, float)):
+                                    date_val = datetime.fromtimestamp(val).date()
+                                if date_val:
+                                    break
+                    elif cal is not None:
+                        # Older yfinance — DataFrame with columns
+                        for col in cal.columns if hasattr(cal, "columns") else []:
+                            if "earn" in col.lower():
+                                vals = cal[col].dropna().tolist()
+                                if vals:
+                                    v = vals[0]
+                                    date_val = v.date() if hasattr(v, "date") else v
+                                    break
+                except Exception:
+                    pass
+
+            # Method C: earnings_dates attribute (yfinance 0.2+)
+            if not date_val:
+                try:
+                    ed = tk.earnings_dates
+                    if ed is not None and not ed.empty:
+                        future = ed[ed.index >= str(today)]
+                        if not future.empty:
+                            idx_val = future.index[0]
+                            date_val = idx_val.date() if hasattr(idx_val, "date") else datetime.strptime(str(idx_val)[:10], "%Y-%m-%d").date()
+                except Exception:
+                    pass
+
+            if date_val and str(date_val) >= str(today):
+                eps_est = info.get("forwardEps")
+                items.append({
+                    "sym": sym,
+                    "date": str(date_val),
+                    "timing": "—",
+                    "eps_est": f"${eps_est:.2f}" if eps_est else "—",
+                    "type": "earnings",
+                })
+
         except Exception:
             continue
 
-    return sorted(items, key=lambda x: x["date"])[:30]
+    return sorted(items, key=lambda x: x["date"])[:40]
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def fetch_econ_calendar():
+    """Scrape Forex Factory for economic calendar data, fall back to Finnhub."""
     items = []
     today = datetime.now().date()
 
-    # Finnhub economic calendar
+    # ── 1. Forex Factory scrape ───────────────────────────────────────────────
+    try:
+        from bs4 import BeautifulSoup
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.forexfactory.com/",
+        }
+        r = requests.get("https://www.forexfactory.com/calendar", headers=headers, timeout=20)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "html.parser")
+            table = soup.find("table", class_=re.compile(r"calendar"))
+            if not table:
+                table = soup.find("table")
+            current_date = str(today)
+            if table:
+                for row in table.find_all("tr", class_=re.compile(r"calendar_row|flexbox")):
+                    try:
+                        # Date cell — only present on first row of each day
+                        date_cell = row.find("td", class_=re.compile(r"date|day"))
+                        if date_cell and date_cell.get_text(strip=True):
+                            raw_date = date_cell.get_text(strip=True)
+                            # FF format: "Mon Apr 15" or "Apr 15"
+                            for fmt in ["%a %b %d", "%b %d", "%A %B %d"]:
+                                try:
+                                    parsed = datetime.strptime(f"{raw_date} {today.year}", f"{fmt} %Y")
+                                    current_date = parsed.strftime("%Y-%m-%d")
+                                    break
+                                except ValueError:
+                                    continue
+
+                        # Time
+                        time_cell = row.find("td", class_=re.compile(r"time"))
+                        time_str  = time_cell.get_text(strip=True) if time_cell else ""
+
+                        # Currency
+                        cur_cell  = row.find("td", class_=re.compile(r"currency"))
+                        currency  = cur_cell.get_text(strip=True) if cur_cell else ""
+
+                        # Impact — FF uses icon classes: high, medium, low
+                        imp_cell  = row.find("td", class_=re.compile(r"impact"))
+                        impact    = "LOW"
+                        if imp_cell:
+                            imp_html = str(imp_cell)
+                            if "high" in imp_html.lower():   impact = "HIGH"
+                            elif "medium" in imp_html.lower() or "med" in imp_html.lower(): impact = "MED"
+
+                        # Event name
+                        ev_cell   = row.find("td", class_=re.compile(r"event"))
+                        event     = ev_cell.get_text(strip=True) if ev_cell else ""
+
+                        # Actual / Forecast / Previous
+                        act_cell  = row.find("td", class_=re.compile(r"actual"))
+                        fore_cell = row.find("td", class_=re.compile(r"forecast"))
+                        prev_cell = row.find("td", class_=re.compile(r"previous"))
+                        actual    = act_cell.get_text(strip=True)  if act_cell  else "—"
+                        forecast  = fore_cell.get_text(strip=True) if fore_cell else "—"
+                        previous  = prev_cell.get_text(strip=True) if prev_cell else "—"
+
+                        if event and current_date >= str(today):
+                            items.append({
+                                "event":    clean(event),
+                                "date":     current_date,
+                                "time":     time_str or "—",
+                                "currency": currency or "USD",
+                                "impact":   impact,
+                                "estimate": forecast or "—",
+                                "actual":   actual   or "—",
+                                "previous": previous or "—",
+                                "type":     "econ",
+                                "source":   "forexfactory",
+                            })
+                    except Exception:
+                        continue
+
+        if items:
+            return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH", x["currency"] != "USD"))
+    except Exception:
+        pass
+
+    # ── 2. Finnhub fallback ───────────────────────────────────────────────────
     if FINNHUB_API_KEY:
         try:
             r = requests.get(
@@ -1214,33 +1336,35 @@ def fetch_econ_calendar():
                     imp_label = "HIGH" if "high" in impact else ("MED" if "medium" in impact or "med" in impact else "LOW")
                     items.append({
                         "event": event, "date": date_s,
+                        "time": "—", "currency": "USD",
                         "impact": imp_label,
                         "estimate": str(est) if est else "—",
-                        "actual": str(actual) if actual else "—",
-                        "type": "econ",
+                        "actual":   str(actual) if actual else "—",
+                        "previous": "—",
+                        "type": "econ", "source": "finnhub",
                     })
             if items:
                 return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH"))
         except Exception:
             pass
 
-    # Static fallback with major known events for current week
-    events = [
-        {"event": "FOMC Meeting Minutes", "impact": "HIGH", "estimate": "—", "actual": "—"},
-        {"event": "CPI (Core) YoY",        "impact": "HIGH", "estimate": "—", "actual": "—"},
-        {"event": "Initial Jobless Claims", "impact": "MED",  "estimate": "—", "actual": "—"},
-        {"event": "Nonfarm Payrolls",       "impact": "HIGH", "estimate": "—", "actual": "—"},
-        {"event": "GDP Growth Rate QoQ",    "impact": "HIGH", "estimate": "—", "actual": "—"},
-        {"event": "Retail Sales MoM",       "impact": "MED",  "estimate": "—", "actual": "—"},
-        {"event": "PCE Price Index YoY",    "impact": "HIGH", "estimate": "—", "actual": "—"},
-        {"event": "Consumer Confidence",    "impact": "MED",  "estimate": "—", "actual": "—"},
-        {"event": "ISM Manufacturing PMI",  "impact": "MED",  "estimate": "—", "actual": "—"},
-        {"event": "Fed Chair Speech",       "impact": "HIGH", "estimate": "—", "actual": "—"},
+    # ── 3. Static fallback ────────────────────────────────────────────────────
+    fallback = [
+        {"event": "FOMC Meeting Minutes", "impact": "HIGH"},
+        {"event": "CPI (Core) YoY",       "impact": "HIGH"},
+        {"event": "Initial Jobless Claims","impact": "MED"},
+        {"event": "Nonfarm Payrolls",      "impact": "HIGH"},
+        {"event": "GDP Growth Rate QoQ",   "impact": "HIGH"},
+        {"event": "Retail Sales MoM",      "impact": "MED"},
+        {"event": "PCE Price Index YoY",   "impact": "HIGH"},
+        {"event": "Consumer Confidence",   "impact": "MED"},
+        {"event": "ISM Manufacturing PMI", "impact": "MED"},
+        {"event": "Fed Chair Speech",      "impact": "HIGH"},
     ]
-    for i, ev in enumerate(events):
-        ev["date"] = str(today)
-        ev["type"] = "econ"
-        items.append(ev)
+    for ev in fallback:
+        items.append({**ev, "date": str(today), "time": "—", "currency": "USD",
+                      "estimate": "—", "actual": "—", "previous": "—",
+                      "type": "econ", "source": "static"})
     return items
 
 
@@ -1294,24 +1418,54 @@ def render_calendar(earnings, econ):
             st.markdown(rows_html, unsafe_allow_html=True)
 
     else:
-        st.markdown("""<div class="cal-head">
-  <span>DATE</span><span>IMPACT</span><span>EVENT</span><span>ESTIMATE</span><span>ACTUAL</span>
+        # Show source badge + FF link
+        source = econ[0].get("source","") if econ else ""
+        if source == "forexfactory":
+            st.markdown("""<div style="padding:8px 14px 4px;display:flex;align-items:center;gap:10px">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#3d4158;letter-spacing:1px">SOURCE</span>
+  <a href="https://www.forexfactory.com/calendar" target="_blank"
+     style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
+            color:#f59e0b;text-decoration:none;background:rgba(245,158,11,.1);
+            border:1px solid rgba(245,158,11,.25);padding:2px 10px;border-radius:4px;">
+    🏭 Forex Factory ↗
+  </a>
+</div>""", unsafe_allow_html=True)
+
+        st.markdown("""<div class="cal-head" style="grid-template-columns:70px 50px 60px 50px 1fr 90px 90px">
+  <span>DATE</span><span>TIME</span><span>CCY</span><span>IMPACT</span>
+  <span>EVENT</span><span>FORECAST</span><span>ACTUAL</span>
 </div>""", unsafe_allow_html=True)
         if not econ:
-            st.markdown('<div class="sc-empty">NO ECONOMIC EVENTS — ADD FINNHUB KEY FOR FULL CALENDAR</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sc-empty">NO ECONOMIC EVENTS — FOREX FACTORY UNAVAILABLE</div>', unsafe_allow_html=True)
         else:
             rows_html = ""
-            for e in econ[:20]:
+            for e in econ[:30]:
                 date_cls  = "cal-today" if e["date"] == today_str else "cal-date"
                 date_disp = "TODAY" if e["date"] == today_str else e["date"][5:]
                 imp       = e.get("impact","LOW")
                 imp_cls   = "cal-impact-high" if imp == "HIGH" else ("cal-impact-med" if imp == "MED" else "cal-impact-low")
-                rows_html += f"""<div class="cal-row">
+                ccy       = e.get("currency","USD")
+                ccy_color = "#22c55e" if ccy == "USD" else ("#60a5fa" if ccy in ("EUR","GBP") else "#a78bfa" if ccy in ("JPY","CHF") else "#9ca3af")
+                actual    = e.get("actual","—")
+                forecast  = e.get("estimate","—")
+                time_s    = e.get("time","—")
+                # Highlight actual if it beat forecast
+                act_style = ""
+                if actual not in ("—","") and forecast not in ("—",""):
+                    try:
+                        a = float(re.sub(r"[^0-9.\-]","", actual))
+                        f = float(re.sub(r"[^0-9.\-]","", forecast))
+                        act_style = "color:#22c55e;font-weight:700" if a > f else ("color:#ef4444;font-weight:700" if a < f else "")
+                    except Exception:
+                        pass
+                rows_html += f"""<div class="cal-row" style="grid-template-columns:70px 50px 60px 50px 1fr 90px 90px">
   <span class="{date_cls}">{date_disp}</span>
+  <span class="cal-timing" style="font-size:9px">{time_s}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:{ccy_color}">{ccy}</span>
   <span><span class="{imp_cls}">{imp}</span></span>
   <span class="cal-name">{e['event']}</span>
-  <span class="cal-est">{e['estimate']}</span>
-  <span class="cal-est">{e['actual']}</span>
+  <span class="cal-est">{forecast}</span>
+  <span class="cal-est" style="{act_style}">{actual}</span>
 </div>"""
             st.markdown(rows_html, unsafe_allow_html=True)
 
