@@ -344,6 +344,39 @@ a.td-news-link:hover { text-decoration: underline; }
 .cal-timing { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #6b7280; }
 .cal-bmo { color: #22c55e; }
 .cal-amc { color: #f59e0b; }
+
+/* ── streamlit tab overrides ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0;
+    background: #0f1117;
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 8px;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    border-radius: 7px;
+    color: #4a4e62;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    padding: 8px 18px;
+    border: none;
+    transition: all .15s;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: #c8cad6;
+    background: rgba(255,255,255,.04);
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(99,102,241,.15) !important;
+    color: #a5b4fc !important;
+    border: 1px solid rgba(99,102,241,.25) !important;
+}
+.stTabs [data-baseweb="tab-highlight"] { display: none; }
+.stTabs [data-baseweb="tab-border"]    { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1366,39 +1399,55 @@ st.markdown(f"""<div class="sc-header">
 <div class="sc-mkt-bar">{mkt_bar_html}</div>
 """, unsafe_allow_html=True)
 
-# Ticker detail panel (shown at top when a ticker is selected)
+# Ticker detail panel — always shown at top when a ticker is selected
 if st.session_state.get("selected_ticker"):
     st.markdown('<div class="sc-section">Ticker Detail</div>', unsafe_allow_html=True)
     render_ticker_detail(st.session_state["selected_ticker"], st.session_state["selected_quote"] or {})
 
-st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
-c1, c2 = st.columns(2)
-with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page")
-with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page")
+# ── tabs ──────────────────────────────────────────────────────────────────────
+tab_scans, tab_gaps, tab_flow, tab_volume, tab_calendar, tab_news = st.tabs([
+    "📈  Scans",
+    "⚡  Gappers",
+    "🔥  Options Flow",
+    "📊  Volume",
+    "📅  Calendar",
+    "📰  News",
+])
 
-st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=True)
-c3, c4 = st.columns(2)
-with c3: render_gap_panel("Gappers Up",   gap_up, "UP", "gap_up_page")
-with c4: render_gap_panel("Gappers Down", gap_dn, "DN", "gap_dn_page")
+with tab_scans:
+    st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page")
+    with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page")
 
-st.markdown('<div class="sc-section">Options Flow</div>', unsafe_allow_html=True)
-min_prem = st.select_slider(
-    "Min Premium",
-    options=[250_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
-    value=500_000,
-    format_func=lambda x: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else f"${x//1_000}K",
-    key="flow_min_prem",
-    label_visibility="collapsed",
-)
-render_options_flow(flow_items, min_prem)
+with tab_gaps:
+    st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=True)
+    c3, c4 = st.columns(2)
+    with c3: render_gap_panel("Gappers Up",   gap_up, "UP", "gap_up_page")
+    with c4: render_gap_panel("Gappers Down", gap_dn, "DN", "gap_dn_page")
 
-st.markdown('<div class="sc-section">Unusual Volume</div>', unsafe_allow_html=True)
-render_volume_spikes(vol_spikes)
+with tab_flow:
+    st.markdown('<div class="sc-section">Options Flow</div>', unsafe_allow_html=True)
+    min_prem = st.select_slider(
+        "Min Premium",
+        options=[250_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
+        value=500_000,
+        format_func=lambda x: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else f"${x//1_000}K",
+        key="flow_min_prem",
+        label_visibility="collapsed",
+    )
+    render_options_flow(flow_items, min_prem)
 
-st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
-render_calendar(earnings_cal, econ_cal)
+with tab_volume:
+    st.markdown('<div class="sc-section">Unusual Volume</div>', unsafe_allow_html=True)
+    render_volume_spikes(vol_spikes)
 
-st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
-render_news_panel(news)
+with tab_calendar:
+    st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
+    render_calendar(earnings_cal, econ_cal)
+
+with tab_news:
+    st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
+    render_news_panel(news)
 
 st.markdown('</div>', unsafe_allow_html=True)
