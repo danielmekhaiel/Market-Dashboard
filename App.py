@@ -228,6 +228,122 @@ a.td-news-link { color: #818cf8 !important; text-decoration: none; }
 a.td-news-link:hover { text-decoration: underline; }
 .td-news-src { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #4a4e62; margin-top: 2px; }
 .td-no-news { padding: 16px 20px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #3d4158; }
+
+/* ── options flow ── */
+.sc-panel-flow  { border-top: 2px solid #f59e0b; }
+.sc-count-flow  { background: rgba(245,158,11,.1); color: #fcd34d; border: 1px solid rgba(245,158,11,.2); }
+.flow-row {
+    display: grid;
+    grid-template-columns: 56px 52px 70px 70px 60px 60px 70px 1fr;
+    gap: 0; padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.03);
+    align-items: center; font-size: 11px;
+    transition: background .15s;
+}
+.flow-row:last-child { border-bottom: none; }
+.flow-row:hover { background: rgba(245,158,11,.04); }
+.flow-head {
+    display: grid;
+    grid-template-columns: 56px 52px 70px 70px 60px 60px 70px 1fr;
+    gap: 0; padding: 7px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    background: rgba(0,0,0,.2);
+}
+.flow-head span {
+    font-family: 'IBM Plex Mono', monospace; font-size: 8px;
+    font-weight: 700; letter-spacing: 1.5px; color: #2e3148; text-transform: uppercase;
+}
+.flow-sym { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #e8eaf0; font-size: 12px; }
+.flow-call { color: #22c55e; font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 11px; }
+.flow-put  { color: #ef4444; font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 11px; }
+.flow-strike { font-family: 'IBM Plex Mono', monospace; color: #c8cad6; font-size: 11px; }
+.flow-exp    { font-family: 'IBM Plex Mono', monospace; color: #6b7280; font-size: 10px; }
+.flow-prem   { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 11px; }
+.flow-prem-lg { color: #fcd34d; }
+.flow-prem-md { color: #c8cad6; }
+.flow-side-ask  { background: rgba(34,197,94,.12);  color: #4ade80; border: 1px solid rgba(34,197,94,.25);  font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; }
+.flow-side-bid  { background: rgba(239,68,68,.12);  color: #f87171; border: 1px solid rgba(239,68,68,.25);  font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; }
+.flow-side-mid  { background: rgba(255,255,255,.06); color: #8b8fa8; border: 1px solid rgba(255,255,255,.1); font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; }
+.flow-tag-sweep { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-left: 4px; letter-spacing: .5px; }
+.flow-tag-block { background: rgba(99,102,241,.12); color: #a5b4fc; border: 1px solid rgba(99,102,241,.25); font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-left: 4px; letter-spacing: .5px; }
+.flow-time { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #3d4158; text-align: right; }
+.flow-filters {
+    display: flex; gap: 8px; padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    background: rgba(0,0,0,.1); flex-wrap: wrap;
+}
+.flow-filter-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #3d4158; letter-spacing: 1px; text-transform: uppercase; align-self: center; }
+
+/* ── volume spikes ── */
+.sc-panel-vol   { border-top: 2px solid #06b6d4; }
+.sc-count-vol   { background: rgba(6,182,212,.1); color: #67e8f9; border: 1px solid rgba(6,182,212,.2); }
+.vol-row {
+    display: grid;
+    grid-template-columns: 64px 90px 90px 80px 1fr 80px;
+    gap: 0; padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.03);
+    align-items: center; transition: background .15s;
+}
+.vol-row:hover { background: rgba(6,182,212,.04); }
+.vol-row:last-child { border-bottom: none; }
+.vol-head {
+    display: grid;
+    grid-template-columns: 64px 90px 90px 80px 1fr 80px;
+    gap: 0; padding: 7px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    background: rgba(0,0,0,.2);
+}
+.vol-head span {
+    font-family: 'IBM Plex Mono', monospace; font-size: 8px;
+    font-weight: 700; letter-spacing: 1.5px; color: #2e3148; text-transform: uppercase;
+}
+.vol-sym  { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #e8eaf0; font-size: 12px; }
+.vol-num  { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #c8cad6; }
+.vol-ratio-high { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #06b6d4; }
+.vol-ratio-med  { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #67e8f9; }
+.vol-bar-wrap { background: rgba(255,255,255,.05); border-radius: 3px; height: 6px; overflow: hidden; }
+.vol-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #06b6d4, #818cf8); }
+
+/* ── calendar ── */
+.sc-panel-cal   { border-top: 2px solid #a855f7; }
+.sc-count-cal   { background: rgba(168,85,247,.1); color: #d8b4fe; border: 1px solid rgba(168,85,247,.2); }
+.cal-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,.05); }
+.cal-tab {
+    padding: 9px 18px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    color: #3d4158; cursor: pointer; border-bottom: 2px solid transparent;
+    transition: color .15s;
+}
+.cal-tab.active { color: #d8b4fe; border-bottom-color: #a855f7; }
+.cal-row {
+    display: grid; grid-template-columns: 80px 80px 1fr 100px 80px;
+    gap: 0; padding: 9px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.03);
+    align-items: center; font-size: 11px; transition: background .15s;
+}
+.cal-row:hover { background: rgba(168,85,247,.04); }
+.cal-row:last-child { border-bottom: none; }
+.cal-head {
+    display: grid; grid-template-columns: 80px 80px 1fr 100px 80px;
+    gap: 0; padding: 7px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    background: rgba(0,0,0,.2);
+}
+.cal-head span {
+    font-family: 'IBM Plex Mono', monospace; font-size: 8px;
+    font-weight: 700; letter-spacing: 1.5px; color: #2e3148; text-transform: uppercase;
+}
+.cal-date  { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #6b7280; }
+.cal-today { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #fcd34d; font-weight: 700; }
+.cal-sym   { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #e8eaf0; }
+.cal-name  { font-size: 12px; color: #9ca3af; }
+.cal-est   { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #c8cad6; }
+.cal-impact-high { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.25); font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; letter-spacing: .5px; }
+.cal-impact-med  { background: rgba(245,158,11,.1);  color: #fcd34d; border: 1px solid rgba(245,158,11,.2); font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; letter-spacing: .5px; }
+.cal-impact-low  { background: rgba(255,255,255,.06); color: #6b7280; border: 1px solid rgba(255,255,255,.1); font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-block; letter-spacing: .5px; }
+.cal-timing { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #6b7280; }
+.cal-bmo { color: #22c55e; }
+.cal-amc { color: #f59e0b; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -745,28 +861,429 @@ def render_news_panel(news_items):
   </div>{body}</div>""", unsafe_allow_html=True)
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
-if "selected_ticker" not in st.session_state:
-    st.session_state["selected_ticker"] = None
-    st.session_state["selected_quote"]  = None
 
-now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
+# ── options flow ──────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def fetch_options_flow(min_premium=500_000, limit=30):
+    """
+    Pull unusual options flow via Finnhub unusual activity endpoint,
+    falling back to scanning top tickers manually via yfinance.
+    """
+    items = []
 
-with st.spinner("Fetching universe…"):
-    tickers = fetch_universe()
+    # Finnhub unusual options activity (requires paid tier — gracefully skipped if not available)
+    if FINNHUB_API_KEY:
+        try:
+            r = requests.get(
+                f"https://finnhub.io/api/v1/stock/option-unusual?token={FINNHUB_API_KEY}",
+                timeout=15
+            )
+            js = r.json() if r.content else {}
+            data = js.get("data") or js.get("activity") or []
+            for x in data[:limit]:
+                sym     = str(x.get("symbol", x.get("ticker", ""))).upper()
+                cp      = str(x.get("cp", x.get("type", ""))).upper()
+                strike  = x.get("strike") or x.get("strikePrice")
+                exp     = str(x.get("exp") or x.get("expirationDate") or "")[:10]
+                prem    = x.get("premium") or x.get("totalPremium") or 0
+                side    = str(x.get("side") or x.get("aggressor", "")).lower()
+                spot    = x.get("spot") or x.get("underlyingPrice") or 0
+                dte     = x.get("dte") or 0
+                is_sweep = bool(x.get("sweep") or x.get("isSweep"))
+                is_block = bool(x.get("block") or x.get("isBlock"))
+                if sym and prem >= min_premium:
+                    items.append({
+                        "sym": sym, "cp": cp[:1], "strike": strike,
+                        "exp": exp, "prem": prem, "side": side,
+                        "spot": spot, "dte": dte,
+                        "sweep": is_sweep, "block": is_block,
+                        "time": datetime.now().strftime("%H:%M"),
+                    })
+            if items:
+                return sorted(items, key=lambda x: x["prem"], reverse=True)
+        except Exception:
+            pass
 
-with st.spinner("Fetching live quotes…"):
-    quotes = fetch_quotes(tickers)
+    # yfinance fallback — scan top tickers for large unusual OI/volume options
+    top = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","SPY","QQQ",
+           "JPM","NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","UBER"]
+    for sym in top:
+        try:
+            tk   = yf.Ticker(sym)
+            info = tk.info or {}
+            spot = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+            exps = tk.options
+            if not exps:
+                continue
+            exp = exps[0]
+            chain = tk.option_chain(exp)
+            for df, cp in [(chain.calls, "C"), (chain.puts, "P")]:
+                if df is None or df.empty:
+                    continue
+                df = df.copy()
+                df["premium"] = df["lastPrice"] * df["volume"].fillna(0) * 100
+                df = df[df["volume"].fillna(0) > 50]
+                df = df[df["premium"] >= min_premium]
+                for _, row in df.iterrows():
+                    vol = int(row.get("volume") or 0)
+                    oi  = int(row.get("openInterest") or 1)
+                    items.append({
+                        "sym": sym, "cp": cp,
+                        "strike": row.get("strike"),
+                        "exp": exp, "prem": row["premium"],
+                        "side": "ask" if vol > oi else "mid",
+                        "spot": spot, "dte": 0,
+                        "sweep": False, "block": False,
+                        "time": datetime.now().strftime("%H:%M"),
+                    })
+        except Exception:
+            continue
 
-with st.spinner("Fetching catalyst news…"):
-    news = fetch_news()
+    return sorted(items, key=lambda x: x["prem"], reverse=True)[:limit]
 
-valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
-bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
-bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
-gap_valid = [q for q in valid if q.get("gap_pct") is not None]
-gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
-gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
+
+def render_options_flow(items, min_prem_filter):
+    filtered = [x for x in items if x["prem"] >= min_prem_filter]
+
+    st.markdown(f"""<div class="sc-panel sc-panel-flow">
+  <div class="sc-panel-head">
+    <span class="sc-panel-title">Options Flow</span>
+    <span class="sc-count sc-count-flow">{len(filtered)} trades</span>
+  </div>""", unsafe_allow_html=True)
+
+    # Filter bar
+    col_a, col_b, col_c, col_d = st.columns([2, 2, 2, 4])
+    with col_a:
+        cp_filter = st.selectbox("Type", ["All","Calls","Puts"], key="flow_cp", label_visibility="collapsed")
+    with col_b:
+        side_filter = st.selectbox("Side", ["All","Ask","Bid","Mid"], key="flow_side", label_visibility="collapsed")
+    with col_c:
+        tag_filter = st.selectbox("Tag", ["All","Sweep","Block"], key="flow_tag", label_visibility="collapsed")
+
+    # Apply filters
+    rows = filtered
+    if cp_filter == "Calls":  rows = [x for x in rows if x["cp"] == "C"]
+    if cp_filter == "Puts":   rows = [x for x in rows if x["cp"] == "P"]
+    if side_filter != "All":  rows = [x for x in rows if x["side"].lower() == side_filter.lower()]
+    if tag_filter == "Sweep": rows = [x for x in rows if x["sweep"]]
+    if tag_filter == "Block": rows = [x for x in rows if x["block"]]
+
+    if not rows:
+        st.markdown('<div class="sc-empty">NO FLOW MATCHING FILTERS</div>', unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="flow-head">
+  <span>SYMBOL</span><span>TYPE</span><span>STRIKE</span><span>EXPIRY</span>
+  <span>SIDE</span><span>DTE</span><span>PREMIUM</span><span style="text-align:right">TIME</span>
+</div>""", unsafe_allow_html=True)
+
+        rows_html = ""
+        for x in rows[:25]:
+            cp_cls   = "flow-call" if x["cp"] == "C" else "flow-put"
+            cp_label = "CALL" if x["cp"] == "C" else "PUT"
+            prem     = x["prem"]
+            prem_cls = "flow-prem-lg" if prem >= 1_000_000 else "flow-prem-md"
+            prem_str = f"${prem/1_000_000:.2f}M" if prem >= 1_000_000 else f"${prem/1_000:.0f}K"
+            side_lbl = x["side"].lower()
+            if side_lbl == "ask":   side_html = f'<span class="flow-side-ask">ASK</span>'
+            elif side_lbl == "bid": side_html = f'<span class="flow-side-bid">BID</span>'
+            else:                   side_html = f'<span class="flow-side-mid">MID</span>'
+            tags = ""
+            if x.get("sweep"): tags += '<span class="flow-tag-sweep">SWEEP</span>'
+            if x.get("block"): tags += '<span class="flow-tag-block">BLOCK</span>'
+            exp_short = x["exp"][5:] if len(x["exp"]) >= 7 else x["exp"]
+            strike_str = f"${x['strike']:.0f}" if x['strike'] else '—'
+            rows_html += f"""<div class="flow-row">
+  <span class="flow-sym">{x['sym']}</span>
+  <span class="{cp_cls}">{cp_label}</span>
+  <span class="flow-strike">{strike_str}</span>
+  <span class="flow-exp">{exp_short}</span>
+  <span>{side_html}{tags}</span>
+  <span class="flow-exp">{x['dte']}d</span>
+  <span class="{prem_cls} flow-prem">{prem_str}</span>
+  <span class="flow-time">{x['time']}</span>
+</div>"""
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ── volume spikes ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def fetch_volume_spikes(tickers_tuple):
+    tickers = list(tickers_tuple)
+    spikes = []
+    watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","SPY","QQQ",
+                 "JPM","NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","UBER",
+                 "COIN","PLTR","SOFI","MARA","RIOT","GME","AMC","SMCI","ARM","SNOW"]
+    all_tickers = list(dict.fromkeys(tickers + watchlist))[:60]
+
+    for t in all_tickers:
+        try:
+            tk   = yf.Ticker(t)
+            info = tk.info or {}
+            avg_vol = info.get("averageVolume") or info.get("averageDailyVolume10Day") or 0
+            if avg_vol < 500_000:
+                continue
+            hist = tk.history(period="1d", interval="1m")
+            if hist.empty:
+                continue
+            today_vol = int(hist["Volume"].sum())
+            price     = float(hist.iloc[-1]["Close"])
+            # Extrapolate to full day (market is 390 min; estimate elapsed)
+            now_mins  = (datetime.now().hour * 60 + datetime.now().minute)
+            market_open_mins = 9 * 60 + 30
+            elapsed   = max(1, now_mins - market_open_mins)
+            proj_vol  = int(today_vol * (390 / elapsed)) if elapsed < 390 else today_vol
+            ratio     = proj_vol / avg_vol if avg_vol else 0
+            if ratio >= 1.5:
+                spikes.append({
+                    "ticker": t, "price": price,
+                    "today_vol": today_vol, "avg_vol": avg_vol,
+                    "proj_vol": proj_vol, "ratio": ratio,
+                })
+        except Exception:
+            continue
+
+    return sorted(spikes, key=lambda x: x["ratio"], reverse=True)[:20]
+
+
+def render_volume_spikes(spikes):
+    st.markdown(f"""<div class="sc-panel sc-panel-vol">
+  <div class="sc-panel-head">
+    <span class="sc-panel-title">Unusual Volume</span>
+    <span class="sc-count sc-count-vol">{len(spikes)} spikes</span>
+  </div>
+  <div class="vol-head">
+    <span>SYMBOL</span><span>TODAY VOL</span><span>AVG VOL</span>
+    <span>RATIO</span><span style="padding-left:8px">VS AVERAGE</span><span style="text-align:right">PRICE</span>
+  </div>""", unsafe_allow_html=True)
+
+    if not spikes:
+        st.markdown('<div class="sc-empty">NO UNUSUAL VOLUME DETECTED</div>', unsafe_allow_html=True)
+    else:
+        rows_html = ""
+        for s in spikes:
+            ratio     = s["ratio"]
+            ratio_cls = "vol-ratio-high" if ratio >= 3 else "vol-ratio-med"
+            bar_w     = min(100, int((ratio / 5) * 100))
+            rows_html += f"""<div class="vol-row">
+  <span class="vol-sym">{s['ticker']}</span>
+  <span class="vol-num">{fmt_vol(s['today_vol'])}</span>
+  <span class="vol-num">{fmt_vol(s['avg_vol'])}</span>
+  <span class="{ratio_cls}">{ratio:.1f}x</span>
+  <span><div class="vol-bar-wrap"><div class="vol-bar-fill" style="width:{bar_w}%"></div></div></span>
+  <span class="vol-num" style="text-align:right">${fmt_price(s['price'])}</span>
+</div>"""
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ── earnings & economics calendar ─────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def fetch_earnings_calendar():
+    items = []
+    today = datetime.now().date()
+
+    # Finnhub earnings calendar
+    if FINNHUB_API_KEY:
+        try:
+            from_date = today.strftime("%Y-%m-%d")
+            to_date   = datetime(today.year, today.month + (1 if today.month < 12 else 0), 1).strftime("%Y-%m-%d") if today.month < 12 else f"{today.year+1}-01-01"
+            r = requests.get(
+                f"https://finnhub.io/api/v1/calendar/earnings?from={from_date}&to={to_date}&token={FINNHUB_API_KEY}",
+                timeout=15
+            )
+            js = r.json() if r.content else {}
+            for x in (js.get("earningsCalendar") or [])[:40]:
+                sym     = str(x.get("symbol","")).upper()
+                date_s  = str(x.get("date",""))
+                hour    = str(x.get("hour","")).lower()
+                eps_est = x.get("epsEstimate")
+                rev_est = x.get("revenueEstimate")
+                if sym and date_s:
+                    items.append({
+                        "sym": sym, "date": date_s,
+                        "timing": "BMO" if "before" in hour else ("AMC" if "after" in hour else "—"),
+                        "eps_est": f"${eps_est:.2f}" if eps_est else "—",
+                        "rev_est": fmt_mktcap(rev_est) if rev_est else "—",
+                        "type": "earnings",
+                    })
+            if items:
+                return sorted(items, key=lambda x: x["date"])
+        except Exception:
+            pass
+
+    # yfinance fallback for known big names
+    watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","JPM",
+                 "NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","COIN","PLTR"]
+    for sym in watchlist:
+        try:
+            tk   = yf.Ticker(sym)
+            info = tk.info or {}
+            cal  = tk.calendar
+            # yfinance returns dict in newer versions, DataFrame in older
+            cal_dict = {}
+            if cal is not None:
+                if isinstance(cal, dict):
+                    cal_dict = cal
+                else:
+                    try:
+                        if not cal.empty:
+                            cal_dict = cal.to_dict()
+                    except Exception:
+                        pass
+            ed = cal_dict.get("Earnings Date")
+            if ed is not None:
+                if not hasattr(ed, '__iter__') or isinstance(ed, str):
+                    ed = [ed]
+                ed = list(ed)
+                if len(ed) > 0:
+                    date_val = ed[0]
+                    if hasattr(date_val, "date"):
+                        date_val = date_val.date()
+                    if str(date_val) >= str(today):
+                        eps_est = info.get("forwardEps")
+                        rev_est = info.get("revenueEstimate") or info.get("totalRevenue")
+                        items.append({
+                            "sym": sym, "date": str(date_val),
+                            "timing": "—",
+                            "eps_est": f"${eps_est:.2f}" if eps_est else "—",
+                            "rev_est": fmt_mktcap(rev_est) if rev_est else "—",
+                            "type": "earnings",
+                        })
+        except Exception:
+            continue
+
+    return sorted(items, key=lambda x: x["date"])[:30]
+
+
+@st.cache_data(ttl=3600)
+def fetch_econ_calendar():
+    items = []
+    today = datetime.now().date()
+
+    # Finnhub economic calendar
+    if FINNHUB_API_KEY:
+        try:
+            r = requests.get(
+                f"https://finnhub.io/api/v1/calendar/economic?token={FINNHUB_API_KEY}",
+                timeout=15
+            )
+            js = r.json() if r.content else {}
+            for x in (js.get("economicCalendar") or [])[:40]:
+                event  = clean(x.get("event",""))
+                date_s = str(x.get("time",""))[:10]
+                impact = str(x.get("impact","")).lower()
+                actual = x.get("actual","")
+                est    = x.get("estimate","")
+                if event and date_s >= str(today):
+                    imp_label = "HIGH" if "high" in impact else ("MED" if "medium" in impact or "med" in impact else "LOW")
+                    items.append({
+                        "event": event, "date": date_s,
+                        "impact": imp_label,
+                        "estimate": str(est) if est else "—",
+                        "actual": str(actual) if actual else "—",
+                        "type": "econ",
+                    })
+            if items:
+                return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH"))
+        except Exception:
+            pass
+
+    # Static fallback with major known events for current week
+    events = [
+        {"event": "FOMC Meeting Minutes", "impact": "HIGH", "estimate": "—", "actual": "—"},
+        {"event": "CPI (Core) YoY",        "impact": "HIGH", "estimate": "—", "actual": "—"},
+        {"event": "Initial Jobless Claims", "impact": "MED",  "estimate": "—", "actual": "—"},
+        {"event": "Nonfarm Payrolls",       "impact": "HIGH", "estimate": "—", "actual": "—"},
+        {"event": "GDP Growth Rate QoQ",    "impact": "HIGH", "estimate": "—", "actual": "—"},
+        {"event": "Retail Sales MoM",       "impact": "MED",  "estimate": "—", "actual": "—"},
+        {"event": "PCE Price Index YoY",    "impact": "HIGH", "estimate": "—", "actual": "—"},
+        {"event": "Consumer Confidence",    "impact": "MED",  "estimate": "—", "actual": "—"},
+        {"event": "ISM Manufacturing PMI",  "impact": "MED",  "estimate": "—", "actual": "—"},
+        {"event": "Fed Chair Speech",       "impact": "HIGH", "estimate": "—", "actual": "—"},
+    ]
+    for i, ev in enumerate(events):
+        ev["date"] = str(today)
+        ev["type"] = "econ"
+        items.append(ev)
+    return items
+
+
+def render_calendar(earnings, econ):
+    today_str = str(datetime.now().date())
+
+    if "cal_tab" not in st.session_state:
+        st.session_state["cal_tab"] = "earnings"
+
+    earn_count = len(earnings)
+    econ_count = len([e for e in econ if e["impact"] == "HIGH"])
+
+    st.markdown(f"""<div class="sc-panel sc-panel-cal">
+  <div class="sc-panel-head">
+    <span class="sc-panel-title">Earnings &amp; Economics Calendar</span>
+    <span class="sc-count sc-count-cal">{earn_count} earnings · {econ_count} high-impact</span>
+  </div>""", unsafe_allow_html=True)
+
+    col_e, col_ec, col_sp = st.columns([2, 2, 8])
+    with col_e:
+        if st.button("📅 Earnings", key="tab_earn", use_container_width=True):
+            st.session_state["cal_tab"] = "earnings"
+            st.rerun()
+    with col_ec:
+        if st.button("🏦 Economics", key="tab_econ", use_container_width=True):
+            st.session_state["cal_tab"] = "econ"
+            st.rerun()
+
+    tab = st.session_state["cal_tab"]
+
+    if tab == "earnings":
+        st.markdown("""<div class="cal-head">
+  <span>DATE</span><span>SYMBOL</span><span>COMPANY</span><span>EPS EST</span><span>TIMING</span>
+</div>""", unsafe_allow_html=True)
+        if not earnings:
+            st.markdown('<div class="sc-empty">NO UPCOMING EARNINGS — ADD FINNHUB KEY FOR FULL CALENDAR</div>', unsafe_allow_html=True)
+        else:
+            rows_html = ""
+            for e in earnings[:20]:
+                date_cls  = "cal-today" if e["date"] == today_str else "cal-date"
+                date_disp = "TODAY" if e["date"] == today_str else e["date"][5:]
+                timing    = e.get("timing", "—")
+                tim_cls   = "cal-bmo" if timing == "BMO" else ("cal-amc" if timing == "AMC" else "")
+                rows_html += f"""<div class="cal-row">
+  <span class="{date_cls}">{date_disp}</span>
+  <span class="cal-sym">{e['sym']}</span>
+  <span class="cal-name">—</span>
+  <span class="cal-est">{e['eps_est']}</span>
+  <span class="cal-timing {tim_cls}">{timing}</span>
+</div>"""
+            st.markdown(rows_html, unsafe_allow_html=True)
+
+    else:
+        st.markdown("""<div class="cal-head">
+  <span>DATE</span><span>IMPACT</span><span>EVENT</span><span>ESTIMATE</span><span>ACTUAL</span>
+</div>""", unsafe_allow_html=True)
+        if not econ:
+            st.markdown('<div class="sc-empty">NO ECONOMIC EVENTS — ADD FINNHUB KEY FOR FULL CALENDAR</div>', unsafe_allow_html=True)
+        else:
+            rows_html = ""
+            for e in econ[:20]:
+                date_cls  = "cal-today" if e["date"] == today_str else "cal-date"
+                date_disp = "TODAY" if e["date"] == today_str else e["date"][5:]
+                imp       = e.get("impact","LOW")
+                imp_cls   = "cal-impact-high" if imp == "HIGH" else ("cal-impact-med" if imp == "MED" else "cal-impact-low")
+                rows_html += f"""<div class="cal-row">
+  <span class="{date_cls}">{date_disp}</span>
+  <span><span class="{imp_cls}">{imp}</span></span>
+  <span class="cal-name">{e['event']}</span>
+  <span class="cal-est">{e['estimate']}</span>
+  <span class="cal-est">{e['actual']}</span>
+</div>"""
+            st.markdown(rows_html, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ── market index summary bar ──────────────────────────────────────────────────
 @st.cache_data(ttl=60)
@@ -801,6 +1318,40 @@ def _mkt_item(label, val, pct):
 
 mkt_bar_html = "".join(_mkt_item(l, v, p) for l, v, p in index_data)
 
+
+# ── main ──────────────────────────────────────────────────────────────────────
+if "selected_ticker" not in st.session_state:
+    st.session_state["selected_ticker"] = None
+    st.session_state["selected_quote"]  = None
+
+now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
+
+with st.spinner("Fetching universe…"):
+    tickers = fetch_universe()
+
+with st.spinner("Fetching live quotes…"):
+    quotes = fetch_quotes(tickers)
+
+with st.spinner("Fetching catalyst news…"):
+    news = fetch_news()
+
+valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
+bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
+bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
+gap_valid = [q for q in valid if q.get("gap_pct") is not None]
+gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
+gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
+
+with st.spinner("Fetching options flow…"):
+    flow_items = fetch_options_flow()
+
+with st.spinner("Scanning volume spikes…"):
+    vol_spikes = fetch_volume_spikes(tuple(tickers))
+
+with st.spinner("Loading calendar…"):
+    earnings_cal = fetch_earnings_calendar()
+    econ_cal     = fetch_econ_calendar()
+
 # ── render ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 st.markdown(f"""<div class="sc-header">
@@ -829,6 +1380,23 @@ st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=Tru
 c3, c4 = st.columns(2)
 with c3: render_gap_panel("Gappers Up",   gap_up, "UP", "gap_up_page")
 with c4: render_gap_panel("Gappers Down", gap_dn, "DN", "gap_dn_page")
+
+st.markdown('<div class="sc-section">Options Flow</div>', unsafe_allow_html=True)
+min_prem = st.select_slider(
+    "Min Premium",
+    options=[250_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
+    value=500_000,
+    format_func=lambda x: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else f"${x//1_000}K",
+    key="flow_min_prem",
+    label_visibility="collapsed",
+)
+render_options_flow(flow_items, min_prem)
+
+st.markdown('<div class="sc-section">Unusual Volume</div>', unsafe_allow_html=True)
+render_volume_spikes(vol_spikes)
+
+st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
+render_calendar(earnings_cal, econ_cal)
 
 st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
 render_news_panel(news)
