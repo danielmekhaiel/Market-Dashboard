@@ -1780,10 +1780,18 @@ with st.spinner("Loading calendar…"):
     econ_cal     = fetch_econ_calendar()
 
 # Expected moves for upcoming earnings tickers
-_upcoming_syms = tuple(dict.fromkeys(
-    e["sym"] for e in earnings_cal
-    if e.get("sym") and e.get("date","") >= str(datetime.now().date())
-)[:15])
+earnings_cal = earnings_cal or []
+econ_cal     = econ_cal     or []
+
+try:
+    _today_str = str(datetime.now().date())
+    _upcoming_syms = tuple(list(dict.fromkeys(
+        e.get("sym") for e in earnings_cal
+        if e.get("sym") and e.get("date","") >= _today_str
+    ))[:15])
+except Exception:
+    _upcoming_syms = ()
+
 with st.spinner("Fetching expected moves…"):
     expected_moves = fetch_expected_moves(_upcoming_syms)
 
