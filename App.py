@@ -1391,7 +1391,68 @@ def fetch_econ_calendar():
     return items
 
 
-def render_calendar(earnings, econ):
+@st.cache_data(ttl=300)
+def fetch_expected_moves(syms):
+    """
+    For each symbol, calculate expected move from ATM straddle on the
+    nearest options expiration. Returns dict: sym -> {move_pct, move_dollar, price, exp}
+    """
+    results = {}
+    for sym in syms:
+        try:
+            tk    = yf.Ticker(sym)
+            info  = tk.info or {}
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            if not price:
+                hist  = tk.history(period="1d", interval="1m")
+                price = float(hist.iloc[-1]["Close"]) if not hist.empty else None
+            if not price:
+                continue
+
+            exps = tk.options
+            if not exps:
+                continue
+
+            # Use nearest expiration
+            exp = exps[0]
+            chain = tk.option_chain(exp)
+            calls = chain.calls
+            puts  = chain.puts
+            if calls is None or puts is None or calls.empty or puts.empty:
+                continue
+
+            # Find ATM strike (closest to current price)
+            strikes = calls["strike"].tolist()
+            atm_strike = min(strikes, key=lambda s: abs(s - price))
+
+            atm_call = calls[calls["strike"] == atm_strike]
+            atm_put  = puts[puts["strike"]  == atm_strike]
+            if atm_call.empty or atm_put.empty:
+                continue
+
+            call_price = float(atm_call.iloc[0].get("lastPrice", 0) or 0)
+            put_price  = float(atm_put.iloc[0].get("lastPrice",  0) or 0)
+            straddle   = call_price + put_price
+
+            if straddle <= 0:
+                continue
+
+            move_pct    = (straddle / price) * 100
+            results[sym] = {
+                "move_dollar": straddle,
+                "move_pct":    move_pct,
+                "price":       price,
+                "exp":         exp,
+                "straddle":    straddle,
+            }
+        except Exception:
+            continue
+    return results
+
+
+def render_calendar(earnings, econ, expected_moves=None):
+    if expected_moves is None:
+        expected_moves = {}
     import calendar as cal_lib
     today      = datetime.now().date()
     today_str  = str(today)
@@ -1558,8 +1619,10 @@ def render_calendar(earnings, econ):
                 cls = "bmo" if t == "BMO" else ("amc" if t == "AMC" else "unk")
                 label = ev["sym"]
                 eps = ev.get("eps_est","")
-                tip = f'{label} {eps}'.strip()
-                ev_html += f'<span class="mcal-earn {cls}" title="{tip}">{label}</span>'
+                em  = expected_moves.get(label)
+                em_str = f" ±{em['move_pct']:.1f}%" if em else ""
+                tip = f'{label} | EPS est: {eps}{em_str}'.strip()
+                ev_html += f'<span class="mcal-earn {cls}" title="{tip}">{label}{em_str}</span>'
             else:
                 imp = ev.get("impact","LOW").lower()
                 name = ev.get("event","")[:22]
@@ -1602,21 +1665,51 @@ def render_calendar(earnings, econ):
         upcoming = [e for e in earnings if e["date"] >= today_str][:5]
         if upcoming:
             st.markdown('<div style="padding:10px 12px 0"><div class="sc-section" style="margin-top:0">Upcoming Earnings</div></div>', unsafe_allow_html=True)
+            # Header
+            st.markdown("""<div style="display:grid;grid-template-columns:70px 70px 1fr 100px 100px;
+  gap:0;padding:6px 14px;border-bottom:1px solid rgba(255,255,255,.04);background:rgba(0,0,0,.2)">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;letter-spacing:1.5px;color:#2e3148;text-transform:uppercase">DATE</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;letter-spacing:1.5px;color:#2e3148;text-transform:uppercase">SYMBOL</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;letter-spacing:1.5px;color:#2e3148;text-transform:uppercase">EPS EST</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;letter-spacing:1.5px;color:#2e3148;text-transform:uppercase;text-align:right">EXP MOVE</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;letter-spacing:1.5px;color:#2e3148;text-transform:uppercase;text-align:right">TIMING</span>
+</div>""", unsafe_allow_html=True)
             rows_html = ""
             for e in upcoming:
-                d = e["date"]
+                d         = e["date"]
                 date_disp = "TODAY" if d == today_str else datetime.strptime(d, "%Y-%m-%d").strftime("%b %d")
                 date_cls  = "cal-today" if d == today_str else "cal-date"
                 timing    = e.get("timing","—")
                 tim_cls   = "cal-bmo" if timing == "BMO" else ("cal-amc" if timing == "AMC" else "")
-                rows_html += f"""<div style="display:grid;grid-template-columns:70px 70px 1fr 90px;
-  gap:0;padding:7px 14px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center">
+                sym       = e["sym"]
+
+                # Expected move
+                em = expected_moves.get(sym)
+                if em:
+                    move_pct = em["move_pct"]
+                    move_dol = em["move_dollar"]
+                    # Color by size: >10% red, 5-10% amber, <5% gray
+                    em_color = "#f87171" if move_pct >= 10 else ("#fcd34d" if move_pct >= 5 else "#9ca3af")
+                    em_str   = f'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:700;color:{em_color}">±{move_pct:.1f}%</span>'
+                    em_sub   = f'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:9px;color:#4a4e62"> (±${move_dol:.2f})</span>'
+                    em_html  = em_str + em_sub
+                else:
+                    em_html  = '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#3d4158">—</span>'
+
+                rows_html += f"""<div style="display:grid;grid-template-columns:70px 70px 1fr 100px 100px;
+  gap:0;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center">
   <span class="{date_cls}" style="font-family:'IBM Plex Mono',monospace;font-size:10px">{date_disp}</span>
-  <span class="cal-sym">{e['sym']}</span>
-  <span class="cal-est" style="color:#6b7280">{e.get('eps_est','—')} EPS est.</span>
+  <span class="cal-sym">{sym}</span>
+  <span class="cal-est" style="color:#6b7280">{e.get('eps_est','—')}</span>
+  <span style="text-align:right">{em_html}</span>
   <span class="cal-timing {tim_cls}" style="text-align:right">{timing}</span>
 </div>"""
             st.markdown(rows_html, unsafe_allow_html=True)
+            # Expected move explainer
+            st.markdown("""<div style="padding:8px 14px;font-family:'IBM Plex Mono',monospace;
+font-size:9px;color:#3d4158;border-top:1px solid rgba(255,255,255,.03);letter-spacing:.3px">
+⚡ EXP MOVE = ATM straddle price on nearest expiry · what options market prices in for earnings day move
+</div>""", unsafe_allow_html=True)
 
 
 # ── market index summary bar ──────────────────────────────────────────────────
@@ -1686,6 +1779,14 @@ with st.spinner("Loading calendar…"):
     earnings_cal = fetch_earnings_calendar()
     econ_cal     = fetch_econ_calendar()
 
+# Expected moves for upcoming earnings tickers
+_upcoming_syms = tuple(dict.fromkeys(
+    e["sym"] for e in earnings_cal
+    if e["date"] >= str(datetime.now().date())
+)[:15])
+with st.spinner("Fetching expected moves…"):
+    expected_moves = fetch_expected_moves(_upcoming_syms)
+
 # ── render ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 st.markdown(f"""<div class="sc-header">
@@ -1745,7 +1846,7 @@ with tab_volume:
 
 with tab_calendar:
     st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
-    render_calendar(earnings_cal, econ_cal)
+    render_calendar(earnings_cal, econ_cal, expected_moves)
 
 with tab_news:
     st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
