@@ -1739,14 +1739,23 @@ st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 # ── live data fragment — reruns every 30s without touching the rest of the page
 @st.fragment(run_every=30)
 def live_dashboard():
+    # Fast fetches — run inline (cached, near-instant after first load)
     tickers      = fetch_universe()
     quotes       = fetch_quotes(tickers)
     news         = fetch_news()
-    flow_items   = fetch_options_flow()
-    vol_spikes   = fetch_volume_spikes(tuple(tickers))
+    index_data   = fetch_index_bar()
     earnings_cal = fetch_earnings_calendar() or []
     econ_cal     = fetch_econ_calendar()     or []
-    index_data   = fetch_index_bar()
+
+    # Slow fetches — run in parallel threads so they don't block rendering
+    # If cache is warm they return instantly; if cold they fetch concurrently
+    results = {}
+
+    def _fetch(key, fn, *args):
+        try:
+            results[key] = fn(*args)
+        except Exception:
+            results[key] = [] if key != "expected_moves" else {}
 
     try:
         _today_str     = str(datetime.now().date())
@@ -1757,7 +1766,17 @@ def live_dashboard():
     except Exception:
         _upcoming_syms = ()
 
-    expected_moves = fetch_expected_moves(_upcoming_syms)
+    threads = [
+        threading.Thread(target=_fetch, args=("flow",    fetch_options_flow)),
+        threading.Thread(target=_fetch, args=("vol",     fetch_volume_spikes, tuple(tickers))),
+        threading.Thread(target=_fetch, args=("expmove", fetch_expected_moves, _upcoming_syms)),
+    ]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=25)  # max 25s wait — never blocks render beyond that
+
+    flow_items     = results.get("flow",    [])
+    vol_spikes     = results.get("vol",     [])
+    expected_moves = results.get("expmove", {})
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
