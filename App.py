@@ -453,6 +453,110 @@ def fetch_quotes(tickers):
     return rows
 
 
+@st.cache_data(ttl=60)
+def fetch_scan_data(tickers_tuple):
+    """
+    Enrich each ticker with scan signals:
+    - vol_ratio: today vol / avg vol
+    - rel_strength: stock % vs SPY % (positive = outperforming)
+    - near_52w_high: within 3% of 52-week high
+    - above_vwap: price above intraday VWAP
+    - signals: list of active signal tags
+    """
+    tickers = list(tickers_tuple)
+    results = {}
+
+    # Fetch SPY intraday change for relative strength calc
+    spy_pct = 0.0
+    try:
+        spy  = yf.Ticker("SPY")
+        sh   = spy.history(period="2d", interval="1d")
+        si   = spy.history(period="1d", interval="1m")
+        if not si.empty and len(sh) >= 2:
+            spy_price = float(si.iloc[-1]["Close"])
+            spy_prev  = float(sh.iloc[-2]["Close"])
+            spy_pct   = (spy_price - spy_prev) / spy_prev * 100
+    except Exception:
+        pass
+
+    for t in tickers:
+        try:
+            tk   = yf.Ticker(t)
+            info = tk.info or {}
+
+            avg_vol   = info.get("averageVolume") or info.get("averageDailyVolume10Day") or 0
+            wk52_high = info.get("fiftyTwoWeekHigh")
+            wk52_low  = info.get("fiftyTwoWeekLow")
+
+            intra = tk.history(period="1d", interval="1m")
+            if intra.empty:
+                results[t] = {"vol_ratio": None, "rel_strength": None, "near_52w_high": False,
+                              "above_vwap": None, "signals": []}
+                continue
+
+            price     = float(intra.iloc[-1]["Close"])
+            today_vol = int(intra["Volume"].sum()) if "Volume" in intra.columns else 0
+
+            # Volume ratio
+            vol_ratio = (today_vol / avg_vol) if avg_vol else None
+
+            # VWAP = sum(price * vol) / sum(vol)
+            above_vwap = None
+            try:
+                typical   = (intra["High"] + intra["Low"] + intra["Close"]) / 3
+                vwap      = (typical * intra["Volume"]).cumsum() / intra["Volume"].cumsum()
+                vwap_val  = float(vwap.iloc[-1])
+                above_vwap = price > vwap_val
+            except Exception:
+                pass
+
+            # Daily pct for relative strength
+            hist  = tk.history(period="2d", interval="1d")
+            stock_pct = 0.0
+            if len(hist) >= 2:
+                prev       = float(hist.iloc[-2]["Close"])
+                stock_pct  = (price - prev) / prev * 100
+
+            rel_strength = stock_pct - spy_pct  # positive = beating SPY
+
+            # 52-week high proximity
+            near_52w_high = bool(wk52_high and price >= wk52_high * 0.97)
+            at_52w_low    = bool(wk52_low  and price <= wk52_low  * 1.03)
+
+            # Build signal tags
+            signals = []
+            if vol_ratio and vol_ratio >= 2.0:
+                signals.append(("VOL", f"{vol_ratio:.1f}x avg vol", "#06b6d4"))
+            if above_vwap is True:
+                signals.append(("VWAP+", "above VWAP", "#22c55e"))
+            elif above_vwap is False:
+                signals.append(("VWAP-", "below VWAP", "#ef4444"))
+            if rel_strength >= 2.0:
+                signals.append(("RS+", f"+{rel_strength:.1f}% vs SPY", "#a78bfa"))
+            elif rel_strength <= -2.0:
+                signals.append(("RS-", f"{rel_strength:.1f}% vs SPY", "#f87171"))
+            if near_52w_high:
+                signals.append(("52W↑", "near 52-week high", "#fcd34d"))
+            if at_52w_low:
+                signals.append(("52W↓", "near 52-week low", "#f87171"))
+            if stock_pct >= 3.0 and vol_ratio and vol_ratio >= 1.5:
+                signals.append(("MOM", "momentum breakout", "#f59e0b"))
+
+            results[t] = {
+                "vol_ratio":    vol_ratio,
+                "rel_strength": rel_strength,
+                "near_52w_high": near_52w_high,
+                "above_vwap":   above_vwap,
+                "vwap_val":     vwap_val if above_vwap is not None else None,
+                "signals":      signals,
+                "stock_pct":    stock_pct,
+            }
+        except Exception:
+            results[t] = {"vol_ratio": None, "rel_strength": None, "near_52w_high": False,
+                          "above_vwap": None, "signals": []}
+    return results
+
+
 @st.cache_data(ttl=300)
 def fetch_ticker_detail(ticker):
     """Fetch detailed info for a single ticker using yfinance."""
@@ -751,38 +855,68 @@ def render_ticker_detail(ticker, quote):
 
 
 # ── panel renderers ───────────────────────────────────────────────────────────
-def render_scan_panel(title, rows, direction, page_key):
-    is_bull = direction == "BULL"
+def render_scan_panel(title, rows, direction, page_key, scan_data=None):
+    scan_data = scan_data or {}
+    is_bull   = direction == "BULL"
     if page_key not in st.session_state: st.session_state[page_key] = 1
     page  = min(st.session_state[page_key], max(1, (len(rows) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE))
     start = (page - 1) * ROWS_PER_PAGE
-    page_rows = rows[start: start + ROWS_PER_PAGE]
 
-    av_cls    = "av-bull" if is_bull else "av-bear"
+    # ── filter by signal if selected ─────────────────────────────────────────
+    sig_options = ["All", "VOL 2x+", "VWAP+", "RS+ vs SPY", "Near 52W High", "Momentum"]
+    sig_filter  = st.selectbox("Signal filter", sig_options,
+                               key=f"{page_key}_sig", label_visibility="collapsed")
+
+    def _matches(q):
+        sd = scan_data.get(q["ticker"], {})
+        sigs = [s[0] for s in sd.get("signals", [])]
+        if sig_filter == "VOL 2x+":        return "VOL" in sigs
+        if sig_filter == "VWAP+":          return "VWAP+" in sigs
+        if sig_filter == "RS+ vs SPY":     return "RS+" in sigs
+        if sig_filter == "Near 52W High":  return "52W↑" in sigs
+        if sig_filter == "Momentum":       return "MOM" in sigs
+        return True
+
+    filtered   = [q for q in rows if _matches(q)]
+    page_rows  = filtered[start: start + ROWS_PER_PAGE]
+
     panel_cls = "sc-panel-bull" if is_bull else "sc-panel-bear"
     cnt_cls   = "sc-count-bull" if is_bull else "sc-count-bear"
 
     st.markdown(f"""<div class="sc-panel {panel_cls}">
   <div class="sc-panel-head">
     <span class="sc-panel-title">{title}</span>
-    <span class="sc-count {cnt_cls}">{len(rows)}</span>
+    <span class="sc-count {cnt_cls}">{len(filtered)}</span>
   </div>""", unsafe_allow_html=True)
 
     if not page_rows:
-        st.markdown('<div class="sc-empty">NO DATA</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sc-empty">NO RESULTS</div>', unsafe_allow_html=True)
     else:
-        # Header row
         st.markdown("""<table class="sc-table"><thead>
-<tr><th>SYMBOL</th><th class="r">PRICE</th><th class="r">CHG %</th><th class="r">VOLUME</th></tr>
+<tr><th>SYMBOL</th><th class="r">PRICE</th><th class="r">CHG %</th><th class="r">VOL</th><th>SIGNALS</th></tr>
 </thead></table>""", unsafe_allow_html=True)
 
         for q in page_rows:
-            sym = clean(q["ticker"])
-            pct = q["pct"]
-            cc  = "c-pos" if (pct or 0) >= 0 else "c-neg"
-            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+            sym  = clean(q["ticker"])
+            pct  = q["pct"]
+            cc   = "c-pos" if (pct or 0) >= 0 else "c-neg"
+            sd   = scan_data.get(sym, {})
+            sigs = sd.get("signals", [])
+
+            # Build signal badge HTML
+            badge_html = ""
+            for tag, tip, color in sigs[:4]:
+                badge_html += (
+                    f'<span title="{tip}" style="font-family:\'IBM Plex Mono\',monospace;'
+                    f'font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;'
+                    f'margin-right:3px;background:{color}22;color:{color};'
+                    f'border:1px solid {color}44;white-space:nowrap">{tag}</span>'
+                )
+
+            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 3])
             with col1:
-                if st.button(f"{'🟢' if is_bull else '🔴'} {sym}", key=f"btn_{page_key}_{sym}", use_container_width=True):
+                if st.button(f"{'🟢' if is_bull else '🔴'} {sym}",
+                             key=f"btn_{page_key}_{sym}", use_container_width=True):
                     if st.session_state.get("selected_ticker") == sym:
                         st.session_state["selected_ticker"] = None
                         st.session_state["selected_quote"]  = None
@@ -791,16 +925,25 @@ def render_scan_panel(title, rows, direction, page_key):
                         st.session_state["selected_quote"]  = q
                     st.rerun()
             with col2:
-                st.markdown(f'<div class="c-price" style="padding-top:6px">{fmt_price(q["price"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="c-price" style="padding-top:6px">{fmt_price(q["price"])}</div>',
+                            unsafe_allow_html=True)
             with col3:
-                st.markdown(f'<div class="{cc}" style="padding-top:6px">{fmt_pct(pct)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="{cc}" style="padding-top:6px">{fmt_pct(pct)}</div>',
+                            unsafe_allow_html=True)
             with col4:
-                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>',
+                            unsafe_allow_html=True)
+            with col5:
+                st.markdown(f'<div style="padding-top:5px;line-height:1.8">{badge_html}</div>',
+                            unsafe_allow_html=True)
 
-        st.markdown(f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–{min(start+ROWS_PER_PAGE,len(rows))} of {len(rows)}</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
+            f'{min(start+ROWS_PER_PAGE,len(filtered))} of {len(filtered)}</span></div>',
+            unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
-    _pg_controls(page_key, len(rows))
+    _pg_controls(page_key, len(filtered))
 
 
 def render_gap_panel(title, rows, direction, page_key):
@@ -1770,13 +1913,15 @@ def live_dashboard():
         threading.Thread(target=_fetch, args=("flow",    fetch_options_flow)),
         threading.Thread(target=_fetch, args=("vol",     fetch_volume_spikes, tuple(tickers))),
         threading.Thread(target=_fetch, args=("expmove", fetch_expected_moves, _upcoming_syms)),
+        threading.Thread(target=_fetch, args=("scan",    fetch_scan_data,      tuple(tickers))),
     ]
     for t in threads: t.start()
-    for t in threads: t.join(timeout=25)  # max 25s wait — never blocks render beyond that
+    for t in threads: t.join(timeout=25)
 
     flow_items     = results.get("flow",    [])
     vol_spikes     = results.get("vol",     [])
     expected_moves = results.get("expmove", {})
+    scan_data      = results.get("scan",    {})
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
@@ -1827,9 +1972,21 @@ def live_dashboard():
 
     with tab_scans:
         st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
+
+        # Signal legend
+        st.markdown("""<div style="display:flex;gap:12px;flex-wrap:wrap;padding:4px 0 8px;
+font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.5px">
+  <span style="color:#06b6d4">■ VOL — volume spike 2x+</span>
+  <span style="color:#22c55e">■ VWAP+ — above VWAP</span>
+  <span style="color:#a78bfa">■ RS+ — outperforming SPY</span>
+  <span style="color:#fcd34d">■ 52W↑ — near 52-week high</span>
+  <span style="color:#f59e0b">■ MOM — momentum breakout</span>
+  <span style="color:#f87171">■ RS-/VWAP-/52W↓ — bearish signals</span>
+</div>""", unsafe_allow_html=True)
+
         c1, c2 = st.columns(2)
-        with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page")
-        with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page")
+        with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page", scan_data)
+        with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page", scan_data)
 
     with tab_gaps:
         st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=True)
