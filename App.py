@@ -1118,7 +1118,7 @@ def fetch_earnings_calendar():
     items = []
     today = datetime.now().date()
 
-    # ── 1. Finnhub (if key provided) ─────────────────────────────────────────
+    # ── 1. Finnhub (best, if key provided) ───────────────────────────────────
     if FINNHUB_API_KEY:
         try:
             from_date = today.strftime("%Y-%m-%d")
@@ -1146,85 +1146,108 @@ def fetch_earnings_calendar():
         except Exception:
             pass
 
-    # ── 2. yfinance — try multiple methods ───────────────────────────────────
+    # ── 2. Scrape Yahoo Finance earnings calendar (no key needed) ─────────────
+    try:
+        from bs4 import BeautifulSoup
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        r = requests.get("https://finance.yahoo.com/calendar/earnings", headers=headers, timeout=20)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "html.parser")
+            # Yahoo renders a table with id="cal-res-table" or class containing "calendar"
+            table = (soup.find("table", {"id": "cal-res-table"}) or
+                     soup.find("table", class_=re.compile(r"W\(100\%\)")) or
+                     soup.find("table"))
+            if table:
+                for row in table.find_all("tr")[1:]:
+                    cols = row.find_all("td")
+                    if len(cols) >= 3:
+                        sym      = cols[0].get_text(strip=True).upper()
+                        company  = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                        date_raw = cols[2].get_text(strip=True) if len(cols) > 2 else ""
+                        eps_est  = cols[3].get_text(strip=True) if len(cols) > 3 else "—"
+                        timing   = cols[4].get_text(strip=True) if len(cols) > 4 else "—"
+                        if not sym or not date_raw:
+                            continue
+                        # Parse date — Yahoo uses "Apr 18, 2026" or "2026-04-18"
+                        date_val = None
+                        for fmt in ["%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"]:
+                            try:
+                                date_val = datetime.strptime(date_raw[:12].strip(), fmt).date()
+                                break
+                            except ValueError:
+                                continue
+                        if date_val and str(date_val) >= str(today):
+                            # Normalize EPS
+                            if eps_est in ("N/A","--","","None"): eps_est = "—"
+                            elif not eps_est.startswith("$"):
+                                try: eps_est = f"${float(eps_est):.2f}"
+                                except Exception: pass
+                            # Normalize timing
+                            timing_norm = "BMO" if any(x in timing.lower() for x in ("before","bmo","morning")) \
+                                     else "AMC" if any(x in timing.lower() for x in ("after","amc","close")) \
+                                     else "—"
+                            items.append({
+                                "sym": sym[:6], "date": str(date_val),
+                                "timing": timing_norm,
+                                "eps_est": eps_est,
+                                "type": "earnings",
+                            })
+            if items:
+                return sorted(items, key=lambda x: x["date"])[:40]
+    except Exception:
+        pass
+
+    # ── 3. yfinance earnings_dates (most reliable yfinance method) ───────────
     watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","JPM",
                  "NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","COIN","PLTR",
                  "UBER","SNAP","SHOP","RBLX","SPOT","ARM","SMCI","MU","QCOM","AVGO"]
     for sym in watchlist:
         try:
-            tk   = yf.Ticker(sym)
-            info = tk.info or {}
-            date_val = None
+            tk = yf.Ticker(sym)
+            # earnings_dates is the most reliable in yfinance 0.2+
+            try:
+                ed = tk.earnings_dates
+                if ed is not None and not ed.empty:
+                    # Filter to future dates only
+                    ed_reset = ed.reset_index()
+                    date_col = ed_reset.columns[0]
+                    for _, row in ed_reset.iterrows():
+                        raw = row[date_col]
+                        try:
+                            d = raw.date() if hasattr(raw, "date") else datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+                            if d >= today:
+                                eps = row.get("EPS Estimate", row.get("epsEstimate"))
+                                eps_str = f"${float(eps):.2f}" if eps and str(eps) not in ("nan","None","") else "—"
+                                items.append({"sym": sym, "date": str(d), "timing": "—", "eps_est": eps_str, "type": "earnings"})
+                                break  # only take next upcoming date
+                        except Exception:
+                            continue
+                    continue
+            except Exception:
+                pass
 
-            # Method A: info dict keys (works in most yfinance versions)
+            # Fallback to info dict
+            info = tk.info or {}
             for key in ("earningsDate", "earningsTimestamp", "nextEarningsDate"):
                 raw = info.get(key)
-                if raw:
-                    try:
-                        if isinstance(raw, (int, float)):
-                            date_val = datetime.fromtimestamp(raw).date()
-                        elif isinstance(raw, str):
-                            date_val = datetime.strptime(raw[:10], "%Y-%m-%d").date()
-                        elif hasattr(raw, "date"):
-                            date_val = raw.date()
-                        if date_val:
-                            break
-                    except Exception:
+                if not raw:
+                    continue
+                try:
+                    if isinstance(raw, (int, float)):
+                        d = datetime.fromtimestamp(raw).date()
+                    elif isinstance(raw, str):
+                        d = datetime.strptime(raw[:10], "%Y-%m-%d").date()
+                    elif hasattr(raw, "date"):
+                        d = raw.date()
+                    else:
                         continue
-
-            # Method B: tk.calendar (dict or DataFrame depending on version)
-            if not date_val:
-                try:
-                    cal = tk.calendar
-                    if isinstance(cal, dict):
-                        # Newer yfinance — flat dict
-                        for key in ("Earnings Date", "earningsDate", "Earnings Dates"):
-                            val = cal.get(key)
-                            if val is not None:
-                                if isinstance(val, (list, tuple)) and len(val) > 0:
-                                    val = val[0]
-                                if hasattr(val, "date"):
-                                    date_val = val.date()
-                                elif isinstance(val, str):
-                                    date_val = datetime.strptime(val[:10], "%Y-%m-%d").date()
-                                elif isinstance(val, (int, float)):
-                                    date_val = datetime.fromtimestamp(val).date()
-                                if date_val:
-                                    break
-                    elif cal is not None:
-                        # Older yfinance — DataFrame with columns
-                        for col in cal.columns if hasattr(cal, "columns") else []:
-                            if "earn" in col.lower():
-                                vals = cal[col].dropna().tolist()
-                                if vals:
-                                    v = vals[0]
-                                    date_val = v.date() if hasattr(v, "date") else v
-                                    break
+                    if d >= today:
+                        eps = info.get("forwardEps")
+                        items.append({"sym": sym, "date": str(d), "timing": "—",
+                                      "eps_est": f"${eps:.2f}" if eps else "—", "type": "earnings"})
+                    break
                 except Exception:
-                    pass
-
-            # Method C: earnings_dates attribute (yfinance 0.2+)
-            if not date_val:
-                try:
-                    ed = tk.earnings_dates
-                    if ed is not None and not ed.empty:
-                        future = ed[ed.index >= str(today)]
-                        if not future.empty:
-                            idx_val = future.index[0]
-                            date_val = idx_val.date() if hasattr(idx_val, "date") else datetime.strptime(str(idx_val)[:10], "%Y-%m-%d").date()
-                except Exception:
-                    pass
-
-            if date_val and str(date_val) >= str(today):
-                eps_est = info.get("forwardEps")
-                items.append({
-                    "sym": sym,
-                    "date": str(date_val),
-                    "timing": "—",
-                    "eps_est": f"${eps_est:.2f}" if eps_est else "—",
-                    "type": "earnings",
-                })
-
+                    continue
         except Exception:
             continue
 
@@ -1369,107 +1392,231 @@ def fetch_econ_calendar():
 
 
 def render_calendar(earnings, econ):
-    today_str = str(datetime.now().date())
+    import calendar as cal_lib
+    today      = datetime.now().date()
+    today_str  = str(today)
 
-    if "cal_tab" not in st.session_state:
-        st.session_state["cal_tab"] = "earnings"
+    # ── session state ─────────────────────────────────────────────────────────
+    if "cal_tab"   not in st.session_state: st.session_state["cal_tab"]   = "earnings"
+    if "cal_month" not in st.session_state: st.session_state["cal_month"] = today.month
+    if "cal_year"  not in st.session_state: st.session_state["cal_year"]  = today.year
+
+    month = st.session_state["cal_month"]
+    year  = st.session_state["cal_year"]
 
     earn_count = len(earnings)
-    econ_count = len([e for e in econ if e["impact"] == "HIGH"])
+    econ_high  = len([e for e in econ if e["impact"] == "HIGH"])
 
+    # ── panel header ──────────────────────────────────────────────────────────
     st.markdown(f"""<div class="sc-panel sc-panel-cal">
   <div class="sc-panel-head">
     <span class="sc-panel-title">Earnings &amp; Economics Calendar</span>
-    <span class="sc-count sc-count-cal">{earn_count} earnings · {econ_count} high-impact</span>
+    <span class="sc-count sc-count-cal">{earn_count} earnings · {econ_high} high-impact econ</span>
   </div>""", unsafe_allow_html=True)
 
-    col_e, col_ec, col_sp = st.columns([2, 2, 8])
-    with col_e:
-        if st.button("📅 Earnings", key="tab_earn", use_container_width=True):
-            st.session_state["cal_tab"] = "earnings"
-            st.rerun()
-    with col_ec:
+    # ── tab + month nav row ───────────────────────────────────────────────────
+    c_earn, c_econ, c_sp, c_prev, c_month, c_next = st.columns([2, 2, 3, 1, 3, 1])
+    with c_earn:
+        if st.button("📅 Earnings",  key="tab_earn", use_container_width=True):
+            st.session_state["cal_tab"] = "earnings"; st.rerun()
+    with c_econ:
         if st.button("🏦 Economics", key="tab_econ", use_container_width=True):
-            st.session_state["cal_tab"] = "econ"
+            st.session_state["cal_tab"] = "econ"; st.rerun()
+    with c_prev:
+        if st.button("‹", key="cal_prev", use_container_width=True):
+            m, y = month - 1, year
+            if m < 1: m, y = 12, y - 1
+            st.session_state["cal_month"] = m
+            st.session_state["cal_year"]  = y
+            st.rerun()
+    with c_month:
+        st.markdown(f'<div style="text-align:center;font-family:\'IBM Plex Mono\',monospace;'
+                    f'font-size:13px;font-weight:700;color:#e8eaf0;padding-top:6px">'
+                    f'{cal_lib.month_name[month]} {year}</div>', unsafe_allow_html=True)
+    with c_next:
+        if st.button("›", key="cal_next", use_container_width=True):
+            m, y = month + 1, year
+            if m > 12: m, y = 1, y + 1
+            st.session_state["cal_month"] = m
+            st.session_state["cal_year"]  = y
             st.rerun()
 
     tab = st.session_state["cal_tab"]
 
+    # ── build lookup: date_str -> list of items ───────────────────────────────
     if tab == "earnings":
-        st.markdown("""<div class="cal-head">
-  <span>DATE</span><span>SYMBOL</span><span>COMPANY</span><span>EPS EST</span><span>TIMING</span>
-</div>""", unsafe_allow_html=True)
-        if not earnings:
-            st.markdown('<div class="sc-empty">NO UPCOMING EARNINGS — ADD FINNHUB KEY FOR FULL CALENDAR</div>', unsafe_allow_html=True)
-        else:
-            rows_html = ""
-            for e in earnings[:20]:
-                date_cls  = "cal-today" if e["date"] == today_str else "cal-date"
-                date_disp = "TODAY" if e["date"] == today_str else e["date"][5:]
-                timing    = e.get("timing", "—")
-                tim_cls   = "cal-bmo" if timing == "BMO" else ("cal-amc" if timing == "AMC" else "")
-                rows_html += f"""<div class="cal-row">
-  <span class="{date_cls}">{date_disp}</span>
-  <span class="cal-sym">{e['sym']}</span>
-  <span class="cal-name">—</span>
-  <span class="cal-est">{e['eps_est']}</span>
-  <span class="cal-timing {tim_cls}">{timing}</span>
-</div>"""
-            st.markdown(rows_html, unsafe_allow_html=True)
-
+        events_by_date = {}
+        for e in earnings:
+            events_by_date.setdefault(e["date"], []).append(e)
     else:
-        # Show source badge + FF link
-        source = econ[0].get("source","") if econ else ""
-        if source == "forexfactory":
-            st.markdown("""<div style="padding:8px 14px 4px;display:flex;align-items:center;gap:10px">
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#3d4158;letter-spacing:1px">SOURCE</span>
-  <a href="https://www.forexfactory.com/calendar" target="_blank"
-     style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
-            color:#f59e0b;text-decoration:none;background:rgba(245,158,11,.1);
-            border:1px solid rgba(245,158,11,.25);padding:2px 10px;border-radius:4px;">
-    🏭 Forex Factory ↗
-  </a>
+        events_by_date = {}
+        for e in econ:
+            events_by_date.setdefault(e["date"], []).append(e)
+
+    # ── calendar grid CSS ─────────────────────────────────────────────────────
+    st.markdown("""<style>
+.mcal-wrap { padding: 8px 12px 12px; }
+.mcal-dow  {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 3px; margin-bottom: 3px;
+}
+.mcal-dow span {
+    text-align: center; font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; font-weight: 700; letter-spacing: 1px;
+    color: #3d4158; text-transform: uppercase; padding: 4px 0;
+}
+.mcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.mcal-cell {
+    min-height: 90px; background: rgba(255,255,255,.02);
+    border: 1px solid rgba(255,255,255,.04); border-radius: 6px;
+    padding: 5px 5px 4px; position: relative; overflow: hidden;
+    transition: background .15s;
+}
+.mcal-cell:hover { background: rgba(99,102,241,.06); }
+.mcal-cell.today {
+    border-color: rgba(99,102,241,.4);
+    background: rgba(99,102,241,.07);
+}
+.mcal-cell.other-month { opacity: .3; }
+.mcal-cell.weekend { background: rgba(0,0,0,.15); }
+.mcal-day {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    font-weight: 700; color: #4a4e62; margin-bottom: 3px; display: block;
+}
+.mcal-cell.today .mcal-day {
+    color: #fff; background: #6366f1; border-radius: 50%;
+    width: 18px; height: 18px; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 9px;
+}
+.mcal-earn {
+    display: block; font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; font-weight: 700; padding: 1px 4px;
+    border-radius: 3px; margin-bottom: 2px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; cursor: default;
+}
+.mcal-earn.bmo { background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+.mcal-earn.amc { background: rgba(245,158,11,.12); color: #fcd34d; border: 1px solid rgba(245,158,11,.2); }
+.mcal-earn.unk { background: rgba(255,255,255,.06); color: #9ca3af; border: 1px solid rgba(255,255,255,.1); }
+.mcal-econ {
+    display: block; font-size: 9px; padding: 1px 4px;
+    border-radius: 3px; margin-bottom: 2px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.mcal-econ.high { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+.mcal-econ.med  { background: rgba(245,158,11,.1); color: #fcd34d; border: 1px solid rgba(245,158,11,.18); }
+.mcal-econ.low  { background: rgba(255,255,255,.04); color: #6b7280; border: 1px solid rgba(255,255,255,.08); }
+.mcal-more { font-size: 8px; color: #4a4e62; font-family: 'IBM Plex Mono', monospace; padding-left: 2px; }
+.mcal-legend { display: flex; gap: 14px; padding: 8px 12px 4px; border-top: 1px solid rgba(255,255,255,.04); flex-wrap: wrap; }
+.mcal-leg-item { display: flex; align-items: center; gap: 5px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #4a4e62; letter-spacing: .5px; }
+.mcal-leg-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+</style>""", unsafe_allow_html=True)
+
+    # ── build calendar grid ───────────────────────────────────────────────────
+    first_weekday, days_in_month = cal_lib.monthrange(year, month)
+    # first_weekday: 0=Mon ... 6=Sun, convert to Sun-first
+    start_offset = (first_weekday + 1) % 7
+
+    # Previous month overflow days
+    if month == 1: prev_year, prev_month = year - 1, 12
+    else:          prev_year, prev_month = year, month - 1
+    _, prev_days_in_month = cal_lib.monthrange(prev_year, prev_month)
+
+    cells = []
+    # Leading empty cells from prev month
+    for i in range(start_offset):
+        d = prev_days_in_month - start_offset + 1 + i
+        cells.append({"day": d, "month": prev_month, "year": prev_year, "other": True})
+    # This month
+    for d in range(1, days_in_month + 1):
+        cells.append({"day": d, "month": month, "year": year, "other": False})
+    # Trailing cells from next month
+    remainder = (7 - len(cells) % 7) % 7
+    for d in range(1, remainder + 1):
+        nm = month + 1 if month < 12 else 1
+        ny = year if month < 12 else year + 1
+        cells.append({"day": d, "month": nm, "year": ny, "other": True})
+
+    # ── render grid HTML ──────────────────────────────────────────────────────
+    days_html = ""
+    for cell in cells:
+        date_str   = f"{cell['year']:04d}-{cell['month']:02d}-{cell['day']:02d}"
+        is_today   = date_str == today_str
+        is_weekend = datetime.strptime(date_str, "%Y-%m-%d").weekday() >= 5
+        cell_cls   = "mcal-cell"
+        if is_today:        cell_cls += " today"
+        if cell["other"]:   cell_cls += " other-month"
+        if is_weekend:      cell_cls += " weekend"
+
+        day_label = f'<span class="mcal-day">{cell["day"]}</span>'
+
+        evs = events_by_date.get(date_str, [])
+        ev_html = ""
+        max_show = 3
+        for ev in evs[:max_show]:
+            if tab == "earnings":
+                t = ev.get("timing","—")
+                cls = "bmo" if t == "BMO" else ("amc" if t == "AMC" else "unk")
+                label = ev["sym"]
+                eps = ev.get("eps_est","")
+                tip = f'{label} {eps}'.strip()
+                ev_html += f'<span class="mcal-earn {cls}" title="{tip}">{label}</span>'
+            else:
+                imp = ev.get("impact","LOW").lower()
+                name = ev.get("event","")[:22]
+                ev_title = ev.get("event","")
+                ev_html += f'<span class="mcal-econ {imp}" title="{ev_title}">{name}</span>'
+        if len(evs) > max_show:
+            ev_html += f'<span class="mcal-more">+{len(evs)-max_show} more</span>'
+
+        days_html += f'<div class="{cell_cls}">{day_label}{ev_html}</div>'
+
+    # Legend
+    if tab == "earnings":
+        legend = """
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(34,197,94,.3)"></span>BMO — Before Market Open</span>
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(245,158,11,.3)"></span>AMC — After Market Close</span>
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(255,255,255,.1)"></span>Unknown timing</span>"""
+    else:
+        ff_src = econ[0].get("source","") if econ else ""
+        ff_badge = ('&nbsp;·&nbsp;<a href="https://www.forexfactory.com/calendar" target="_blank" '
+                    'style="color:#f59e0b;text-decoration:none;font-weight:700">🏭 Forex Factory ↗</a>'
+                    if ff_src == "forexfactory" else "")
+        legend = f"""
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(239,68,68,.4)"></span>HIGH impact</span>
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(245,158,11,.4)"></span>MED impact</span>
+  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(255,255,255,.15)"></span>LOW impact</span>
+  <span class="mcal-leg-item" style="margin-left:auto">{ff_badge}</span>"""
+
+    st.markdown(f"""<div class="mcal-wrap">
+  <div class="mcal-dow">
+    <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+  </div>
+  <div class="mcal-grid">{days_html}</div>
+</div>
+<div class="mcal-legend">{legend}</div>
 </div>""", unsafe_allow_html=True)
 
-        st.markdown("""<div class="cal-head" style="grid-template-columns:70px 50px 60px 50px 1fr 90px 90px">
-  <span>DATE</span><span>TIME</span><span>CCY</span><span>IMPACT</span>
-  <span>EVENT</span><span>FORECAST</span><span>ACTUAL</span>
-</div>""", unsafe_allow_html=True)
-        if not econ:
-            st.markdown('<div class="sc-empty">NO ECONOMIC EVENTS — FOREX FACTORY UNAVAILABLE</div>', unsafe_allow_html=True)
-        else:
+    # ── selected day detail (earnings only) ───────────────────────────────────
+    if tab == "earnings" and earnings:
+        today_earns = events_by_date.get(today_str, [])
+        upcoming = [e for e in earnings if e["date"] >= today_str][:5]
+        if upcoming:
+            st.markdown('<div style="padding:10px 12px 0"><div class="sc-section" style="margin-top:0">Upcoming Earnings</div></div>', unsafe_allow_html=True)
             rows_html = ""
-            for e in econ[:30]:
-                date_cls  = "cal-today" if e["date"] == today_str else "cal-date"
-                date_disp = "TODAY" if e["date"] == today_str else e["date"][5:]
-                imp       = e.get("impact","LOW")
-                imp_cls   = "cal-impact-high" if imp == "HIGH" else ("cal-impact-med" if imp == "MED" else "cal-impact-low")
-                ccy       = e.get("currency","USD")
-                ccy_color = "#22c55e" if ccy == "USD" else ("#60a5fa" if ccy in ("EUR","GBP") else "#a78bfa" if ccy in ("JPY","CHF") else "#9ca3af")
-                actual    = e.get("actual","—")
-                forecast  = e.get("estimate","—")
-                time_s    = e.get("time","—")
-                # Highlight actual if it beat forecast
-                act_style = ""
-                if actual not in ("—","") and forecast not in ("—",""):
-                    try:
-                        a = float(re.sub(r"[^0-9.\-]","", actual))
-                        f = float(re.sub(r"[^0-9.\-]","", forecast))
-                        act_style = "color:#22c55e;font-weight:700" if a > f else ("color:#ef4444;font-weight:700" if a < f else "")
-                    except Exception:
-                        pass
-                rows_html += f"""<div class="cal-row" style="grid-template-columns:70px 50px 60px 50px 1fr 90px 90px">
-  <span class="{date_cls}">{date_disp}</span>
-  <span class="cal-timing" style="font-size:9px">{time_s}</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:{ccy_color}">{ccy}</span>
-  <span><span class="{imp_cls}">{imp}</span></span>
-  <span class="cal-name">{e['event']}</span>
-  <span class="cal-est">{forecast}</span>
-  <span class="cal-est" style="{act_style}">{actual}</span>
+            for e in upcoming:
+                d = e["date"]
+                date_disp = "TODAY" if d == today_str else datetime.strptime(d, "%Y-%m-%d").strftime("%b %d")
+                date_cls  = "cal-today" if d == today_str else "cal-date"
+                timing    = e.get("timing","—")
+                tim_cls   = "cal-bmo" if timing == "BMO" else ("cal-amc" if timing == "AMC" else "")
+                rows_html += f"""<div style="display:grid;grid-template-columns:70px 70px 1fr 90px;
+  gap:0;padding:7px 14px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center">
+  <span class="{date_cls}" style="font-family:'IBM Plex Mono',monospace;font-size:10px">{date_disp}</span>
+  <span class="cal-sym">{e['sym']}</span>
+  <span class="cal-est" style="color:#6b7280">{e.get('eps_est','—')} EPS est.</span>
+  <span class="cal-timing {tim_cls}" style="text-align:right">{timing}</span>
 </div>"""
             st.markdown(rows_html, unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── market index summary bar ──────────────────────────────────────────────────
