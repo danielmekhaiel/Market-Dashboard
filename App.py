@@ -1662,7 +1662,7 @@ def render_calendar(earnings, econ, expected_moves=None):
     # ── selected day detail (earnings only) ───────────────────────────────────
     if tab == "earnings" and earnings:
         today_earns = events_by_date.get(today_str, [])
-        upcoming = [e for e in earnings if e["date"] >= today_str][:5]
+        upcoming = [e for e in earnings if e.get("date","") >= today_str and e.get("sym")][:5]
         if upcoming:
             st.markdown('<div style="padding:10px 12px 0"><div class="sc-section" style="margin-top:0">Upcoming Earnings</div></div>', unsafe_allow_html=True)
             # Header
@@ -1782,7 +1782,7 @@ with st.spinner("Loading calendar…"):
 # Expected moves for upcoming earnings tickers
 _upcoming_syms = tuple(dict.fromkeys(
     e["sym"] for e in earnings_cal
-    if e["date"] >= str(datetime.now().date())
+    if e.get("sym") and e.get("date","") >= str(datetime.now().date())
 )[:15])
 with st.spinner("Fetching expected moves…"):
     expected_moves = fetch_expected_moves(_upcoming_syms)
