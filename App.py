@@ -1,6 +1,8 @@
 import os
 import re
 import html
+import time
+import threading
 import requests
 import streamlit as st
 import yfinance as yf
@@ -12,16 +14,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Auto-refresh every 30 seconds
-try:
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=30_000, key="autorefresh")
-except ImportError:
-    st.warning("Install streamlit-autorefresh for live updates: `pip install streamlit-autorefresh`")
-
 FINNHUB_API_KEY   = st.secrets.get("FINNHUB_API_KEY",   os.getenv("FINNHUB_API_KEY",   ""))
 MARKETAUX_API_KEY = st.secrets.get("MARKETAUX_API_KEY", os.getenv("MARKETAUX_API_KEY", ""))
-RSS_URL           = st.secrets.get("RSS_URL",            os.getenv("RSS_URL",            ""))
+RSS_URL           = st.secrets.get("RSS_URL",            os.getenv("RSS_URL",           ""))
 
 ROWS_PER_PAGE = 20
 GAP_THRESHOLD = 1.5
@@ -1732,72 +1727,59 @@ def fetch_index_bar():
             pass
     return results
 
-index_data = fetch_index_bar()
-
-def _mkt_item(label, val, pct):
-    chg_cls = "sc-mkt-chg-pos" if pct >= 0 else "sc-mkt-chg-neg"
-    arrow   = "▲" if pct >= 0 else "▼"
-    return f"""<div class="sc-mkt-item">
-  <div class="sc-mkt-label">{label}</div>
-  <div class="sc-mkt-val">{val:,.2f}</div>
-  <div class="{chg_cls}">{arrow} {abs(pct):.2f}%</div>
-</div>"""
-
-mkt_bar_html = "".join(_mkt_item(l, v, p) for l, v, p in index_data)
-
 
 # ── main ──────────────────────────────────────────────────────────────────────
 if "selected_ticker" not in st.session_state:
     st.session_state["selected_ticker"] = None
     st.session_state["selected_quote"]  = None
 
-now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
+# ── header (static — never re-runs) ──────────────────────────────────────────
+st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 
-with st.spinner("Fetching universe…"):
-    tickers = fetch_universe()
+# ── live data fragment — reruns every 30s without touching the rest of the page
+@st.fragment(run_every=30)
+def live_dashboard():
+    tickers      = fetch_universe()
+    quotes       = fetch_quotes(tickers)
+    news         = fetch_news()
+    flow_items   = fetch_options_flow()
+    vol_spikes   = fetch_volume_spikes(tuple(tickers))
+    earnings_cal = fetch_earnings_calendar() or []
+    econ_cal     = fetch_econ_calendar()     or []
+    index_data   = fetch_index_bar()
 
-with st.spinner("Fetching live quotes…"):
-    quotes = fetch_quotes(tickers)
+    try:
+        _today_str     = str(datetime.now().date())
+        _upcoming_syms = tuple(list(dict.fromkeys(
+            e.get("sym") for e in earnings_cal
+            if e.get("sym") and e.get("date","") >= _today_str
+        ))[:15])
+    except Exception:
+        _upcoming_syms = ()
 
-with st.spinner("Fetching catalyst news…"):
-    news = fetch_news()
-
-valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
-bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
-bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
-gap_valid = [q for q in valid if q.get("gap_pct") is not None]
-gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
-gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
-
-with st.spinner("Fetching options flow…"):
-    flow_items = fetch_options_flow()
-
-with st.spinner("Scanning volume spikes…"):
-    vol_spikes = fetch_volume_spikes(tuple(tickers))
-
-with st.spinner("Loading calendar…"):
-    earnings_cal = fetch_earnings_calendar()
-    econ_cal     = fetch_econ_calendar()
-
-# Expected moves for upcoming earnings tickers
-earnings_cal = earnings_cal or []
-econ_cal     = econ_cal     or []
-
-try:
-    _today_str = str(datetime.now().date())
-    _upcoming_syms = tuple(list(dict.fromkeys(
-        e.get("sym") for e in earnings_cal
-        if e.get("sym") and e.get("date","") >= _today_str
-    ))[:15])
-except Exception:
-    _upcoming_syms = ()
-
-with st.spinner("Fetching expected moves…"):
     expected_moves = fetch_expected_moves(_upcoming_syms)
 
-# ── render ────────────────────────────────────────────────────────────────────
-st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
-st.markdown(f"""<div class="sc-header">
+    valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
+    bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
+    bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
+    gap_valid = [q for q in valid if q.get("gap_pct") is not None]
+    gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
+    gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
+
+    now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
+
+    def _mkt_item(label, val, pct):
+        chg_cls = "sc-mkt-chg-pos" if pct >= 0 else "sc-mkt-chg-neg"
+        arrow   = "▲" if pct >= 0 else "▼"
+        return f"""<div class="sc-mkt-item">
+  <div class="sc-mkt-label">{label}</div>
+  <div class="sc-mkt-val">{val:,.2f}</div>
+  <div class="{chg_cls}">{arrow} {abs(pct):.2f}%</div>
+</div>"""
+
+    mkt_bar_html = "".join(_mkt_item(l, v, p) for l, v, p in index_data)
+
+    st.markdown(f"""<div class="sc-header">
   <div class="sc-logo">MS</div>
   <div>
     <div class="sc-title">Market Scanner</div>
@@ -1809,55 +1791,57 @@ st.markdown(f"""<div class="sc-header">
 <div class="sc-mkt-bar">{mkt_bar_html}</div>
 """, unsafe_allow_html=True)
 
-# Ticker detail panel — always shown at top when a ticker is selected
-if st.session_state.get("selected_ticker"):
-    st.markdown('<div class="sc-section">Ticker Detail</div>', unsafe_allow_html=True)
-    render_ticker_detail(st.session_state["selected_ticker"], st.session_state["selected_quote"] or {})
+    # Ticker detail panel
+    if st.session_state.get("selected_ticker"):
+        st.markdown('<div class="sc-section">Ticker Detail</div>', unsafe_allow_html=True)
+        render_ticker_detail(st.session_state["selected_ticker"], st.session_state["selected_quote"] or {})
 
-# ── tabs ──────────────────────────────────────────────────────────────────────
-tab_scans, tab_gaps, tab_flow, tab_volume, tab_calendar, tab_news = st.tabs([
-    "📈  Scans",
-    "⚡  Gappers",
-    "🔥  Options Flow",
-    "📊  Volume",
-    "📅  Calendar",
-    "📰  News",
-])
+    # ── tabs ──────────────────────────────────────────────────────────────────
+    tab_scans, tab_gaps, tab_flow, tab_volume, tab_calendar, tab_news = st.tabs([
+        "📈  Scans",
+        "⚡  Gappers",
+        "🔥  Options Flow",
+        "📊  Volume",
+        "📅  Calendar",
+        "📰  News",
+    ])
 
-with tab_scans:
-    st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page")
-    with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page")
+    with tab_scans:
+        st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1: render_scan_panel("Bullish Scans", bull, "BULL", "bull_page")
+        with c2: render_scan_panel("Bearish Scans", bear, "BEAR", "bear_page")
 
-with tab_gaps:
-    st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=True)
-    c3, c4 = st.columns(2)
-    with c3: render_gap_panel("Gappers Up",   gap_up, "UP", "gap_up_page")
-    with c4: render_gap_panel("Gappers Down", gap_dn, "DN", "gap_dn_page")
+    with tab_gaps:
+        st.markdown('<div class="sc-section">Daily Gappers</div>', unsafe_allow_html=True)
+        c3, c4 = st.columns(2)
+        with c3: render_gap_panel("Gappers Up",   gap_up, "UP", "gap_up_page")
+        with c4: render_gap_panel("Gappers Down", gap_dn, "DN", "gap_dn_page")
 
-with tab_flow:
-    st.markdown('<div class="sc-section">Options Flow</div>', unsafe_allow_html=True)
-    min_prem = st.select_slider(
-        "Min Premium",
-        options=[250_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
-        value=500_000,
-        format_func=lambda x: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else f"${x//1_000}K",
-        key="flow_min_prem",
-        label_visibility="collapsed",
-    )
-    render_options_flow(flow_items, min_prem)
+    with tab_flow:
+        st.markdown('<div class="sc-section">Options Flow</div>', unsafe_allow_html=True)
+        min_prem = st.select_slider(
+            "Min Premium",
+            options=[250_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
+            value=500_000,
+            format_func=lambda x: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else f"${x//1_000}K",
+            key="flow_min_prem",
+            label_visibility="collapsed",
+        )
+        render_options_flow(flow_items, min_prem)
 
-with tab_volume:
-    st.markdown('<div class="sc-section">Unusual Volume</div>', unsafe_allow_html=True)
-    render_volume_spikes(vol_spikes)
+    with tab_volume:
+        st.markdown('<div class="sc-section">Unusual Volume</div>', unsafe_allow_html=True)
+        render_volume_spikes(vol_spikes)
 
-with tab_calendar:
-    st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
-    render_calendar(earnings_cal, econ_cal, expected_moves)
+    with tab_calendar:
+        st.markdown('<div class="sc-section">Earnings &amp; Economics Calendar</div>', unsafe_allow_html=True)
+        render_calendar(earnings_cal, econ_cal, expected_moves)
 
-with tab_news:
-    st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
-    render_news_panel(news)
+    with tab_news:
+        st.markdown('<div class="sc-section">Catalyst News</div>', unsafe_allow_html=True)
+        render_news_panel(news)
+
+live_dashboard()
 
 st.markdown('</div>', unsafe_allow_html=True)
