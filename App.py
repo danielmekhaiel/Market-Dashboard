@@ -1116,16 +1116,55 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
 
 
 def render_gap_panel(title, rows, direction, page_key):
-    is_up = direction == "UP"
+    is_up     = direction == "UP"
     if page_key not in st.session_state: st.session_state[page_key] = 1
-    page  = min(st.session_state[page_key], max(1, (len(rows) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE))
-    start = (page - 1) * ROWS_PER_PAGE
-    page_rows = rows[start: start + ROWS_PER_PAGE]
 
-    av_cls    = "av-up"  if is_up else "av-dn"
+    # ── enrich each row with gap status ──────────────────────────────────────
+    def _gap_status(q):
+        price      = q.get("price")
+        open_p     = q.get("open")
+        prev_close = q.get("prev_close")
+        gap_pct    = q.get("gap_pct", 0) or 0
+
+        if not all([price, open_p, prev_close]):
+            return "—", 0.0, "#6b7280"
+
+        # How much of the gap has been filled (0% = full gap intact, 100% = fully filled)
+        gap_size = open_p - prev_close  # positive for gap up, negative for gap down
+        if gap_size == 0:
+            fill_pct = 0.0
+        else:
+            filled = open_p - price if is_up else price - open_p
+            fill_pct = max(0.0, min(100.0, (filled / abs(gap_size)) * 100))
+
+        if fill_pct >= 95:
+            return "FILLED", fill_pct, "#f87171"
+        elif (is_up and price < open_p) or (not is_up and price > open_p):
+            return "FADING", fill_pct, "#f59e0b"
+        else:
+            return "HOLDING", fill_pct, "#4ade80"
+
+    # Filter options
+    status_opts = ["All", "Holding", "Fading", "Filled"]
+    status_filter = st.selectbox(
+        "Gap status", status_opts,
+        key=f"{page_key}_status", label_visibility="collapsed"
+    )
+
+    enriched = []
+    for q in rows:
+        status, fill_pct, status_color = _gap_status(q)
+        if status_filter != "All" and status.upper() != status_filter.upper():
+            continue
+        enriched.append({**q, "status": status, "fill_pct": fill_pct, "status_color": status_color})
+
+    page  = min(st.session_state[page_key], max(1, (len(enriched) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE))
+    start = (page - 1) * ROWS_PER_PAGE
+    page_rows = enriched[start: start + ROWS_PER_PAGE]
+
     panel_cls = "sc-panel-gap-up" if is_up else "sc-panel-gap-dn"
     cnt_cls   = "sc-count-gap-up" if is_up else "sc-count-gap-dn"
-    badge     = f"GAP {'UP ▲' if is_up else 'DOWN ▼'} · {len(rows)}"
+    badge     = f"GAP {'UP ▲' if is_up else 'DOWN ▼'} · {len(enriched)}"
 
     st.markdown(f"""<div class="sc-panel {panel_cls}">
   <div class="sc-panel-head">
@@ -1134,19 +1173,45 @@ def render_gap_panel(title, rows, direction, page_key):
   </div>""", unsafe_allow_html=True)
 
     if not page_rows:
-        st.markdown('<div class="sc-empty">NO GAP DATA — FINNHUB KEY REQUIRED FOR ACCURATE OPEN vs PREV CLOSE</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sc-empty">NO GAPS MATCHING FILTER</div>', unsafe_allow_html=True)
     else:
         gap_cls = "c-gap-up" if is_up else "c-gap-dn"
         st.markdown("""<table class="sc-table"><thead>
-<tr><th>SYMBOL</th><th class="r">PREV CLOSE</th><th class="r">OPEN</th><th class="r">GAP %</th><th class="r">DAY CHG %</th><th class="r">VOLUME</th></tr>
+<tr><th>SYMBOL</th><th class="r">GAP %</th><th class="r">STATUS</th>
+<th class="r">FILLED</th><th class="r">DAY %</th><th class="r">VOL</th></tr>
 </thead></table>""", unsafe_allow_html=True)
 
         for q in page_rows:
-            sym    = clean(q["ticker"])
-            pct_cc = "c-pos" if (q["pct"] or 0) >= 0 else "c-neg"
-            col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 2, 2, 2, 2])
+            sym        = clean(q["ticker"])
+            pct_cc     = "c-pos" if (q["pct"] or 0) >= 0 else "c-neg"
+            status     = q["status"]
+            fill_pct   = q["fill_pct"]
+            sc         = q["status_color"]
+
+            # Status badge
+            status_html = (
+                f'<span style="font-family:\'DM Sans\',sans-serif;font-size:11px;'
+                f'font-weight:700;padding:3px 8px;border-radius:5px;'
+                f'background:{sc}22;color:{sc};border:1px solid {sc}55">'
+                f'{status}</span>'
+            )
+
+            # Fill bar
+            bar_color = "#f87171" if fill_pct >= 95 else ("#f59e0b" if fill_pct >= 50 else "#4ade80")
+            fill_html = (
+                f'<div style="display:flex;align-items:center;gap:5px">'
+                f'<div style="width:50px;height:5px;background:rgba(255,255,255,.08);'
+                f'border-radius:3px;overflow:hidden">'
+                f'<div style="width:{fill_pct:.0f}%;height:100%;background:{bar_color};border-radius:3px"></div>'
+                f'</div>'
+                f'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#9ca3af">'
+                f'{fill_pct:.0f}%</span></div>'
+            )
+
+            col1, col2, col3, col4, col5, col6 = st.columns([2.5, 1.5, 2, 2, 1.5, 1.5])
             with col1:
-                if st.button(f"{'▲' if is_up else '▼'} {sym}", key=f"btn_{page_key}_{sym}", use_container_width=True):
+                if st.button(f"{'▲' if is_up else '▼'} {sym}",
+                             key=f"btn_{page_key}_{sym}", use_container_width=True):
                     if st.session_state.get("selected_ticker") == sym:
                         st.session_state["selected_ticker"] = None
                         st.session_state["selected_quote"]  = None
@@ -1155,20 +1220,36 @@ def render_gap_panel(title, rows, direction, page_key):
                         st.session_state["selected_quote"]  = q
                     st.rerun()
             with col2:
-                st.markdown(f'<div class="c-price" style="padding-top:6px">{fmt_price(q["prev_close"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="{gap_cls}" style="padding-top:6px">{fmt_pct(q["gap_pct"])}</div>',
+                            unsafe_allow_html=True)
             with col3:
-                st.markdown(f'<div class="c-price" style="padding-top:6px">{fmt_price(q["open"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="padding-top:4px">{status_html}</div>',
+                            unsafe_allow_html=True)
             with col4:
-                st.markdown(f'<div class="{gap_cls}" style="padding-top:6px">{fmt_pct(q["gap_pct"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="padding-top:6px">{fill_html}</div>',
+                            unsafe_allow_html=True)
             with col5:
-                st.markdown(f'<div class="{pct_cc}" style="padding-top:6px">{fmt_pct(q["pct"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="{pct_cc}" style="padding-top:6px">{fmt_pct(q["pct"])}</div>',
+                            unsafe_allow_html=True)
             with col6:
-                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>',
+                            unsafe_allow_html=True)
 
-        st.markdown(f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–{min(start+ROWS_PER_PAGE,len(rows))} of {len(rows)}</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
+            f'{min(start+ROWS_PER_PAGE,len(enriched))} of {len(enriched)}</span></div>',
+            unsafe_allow_html=True)
+
+    # Legend
+    st.markdown("""<div style="padding:8px 14px;border-top:1px solid rgba(255,255,255,.04);
+display:flex;gap:16px;flex-wrap:wrap">
+  <span style="font-family:'DM Sans',sans-serif;font-size:11px;color:#4ade80;font-weight:600">■ HOLDING — gap intact, price above open</span>
+  <span style="font-family:'DM Sans',sans-serif;font-size:11px;color:#f59e0b;font-weight:600">■ FADING — pulling back toward gap</span>
+  <span style="font-family:'DM Sans',sans-serif;font-size:11px;color:#f87171;font-weight:600">■ FILLED — gap closed, back to prev close</span>
+</div>""", unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
-    _pg_controls(page_key, len(rows))
+    _pg_controls(page_key, len(enriched))
 
 
 def render_news_panel(news_items):
@@ -1506,8 +1587,11 @@ def fetch_earnings_calendar():
 
     # ── 3. yfinance earnings_dates (most reliable yfinance method) ───────────
     watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","JPM",
-                 "NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","COIN","PLTR",
-                 "UBER","SNAP","SHOP","RBLX","SPOT","ARM","SMCI","MU","QCOM","AVGO"]
+                 "NFLX","BAC","V","XOM","MA","GS","MS","WFC","C","UNH","JNJ",
+                 "PG","KO","PEP","WMT","HD","CVX","LLY","ABBV","MRK","TMO",
+                 "DIS","INTC","PYPL","CRM","COIN","PLTR","ORCL","ADBE","QCOM",
+                 "UBER","SNAP","SHOP","RBLX","SPOT","ARM","SMCI","MU","AVGO",
+                 "CAT","DE","BA","RTX","LMT","GE","MMM","HON","IBM","CSCO"]
     for sym in watchlist:
         try:
             tk = yf.Ticker(sym)
