@@ -645,27 +645,75 @@ def fetch_ticker_news(ticker):
 
 @st.cache_data(ttl=300)
 def fetch_universe():
-    urls = [
-        "https://www.slickcharts.com/sp500/gainers",
-        "https://www.slickcharts.com/sp500/losers",
-        "https://uk.finance.yahoo.com/markets/stocks/gainers/",
-        "https://uk.finance.yahoo.com/markets/stocks/losers/",
-    ]
     syms = []
-    for url in urls:
+    block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT",
+             "WITH","ALL","NEW","INC","LLC","LTD","PLC","EST","EDT","AM","PM","IPO"}
+
+    # ── 1. Finviz screener — most active + top gainers + top losers ───────────
+    finviz_urls = [
+        # Most active by volume
+        "https://finviz.com/screener.ashx?v=111&s=ta_topvolume&o=-volume",
+        # Top gainers today
+        "https://finviz.com/screener.ashx?v=111&s=ta_topgainers",
+        # Top losers today
+        "https://finviz.com/screener.ashx?v=111&s=ta_toplosers",
+        # High relative volume
+        "https://finviz.com/screener.ashx?v=111&f=sh_relvol_o2&o=-volume",
+        # Near 52-week highs
+        "https://finviz.com/screener.ashx?v=111&f=ta_highlow52w_nh",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://finviz.com/",
+    }
+    for url in finviz_urls:
         try:
-            r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-            found = re.findall(r'"symbol":"([A-Z\.\-]{1,8})"', r.text) or re.findall(r'\b[A-Z]{2,5}\b', r.text)
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 200:
+                # Finviz ticker cells have class="screener-link-primary"
+                found = re.findall(r'class="screener-link-primary">([A-Z]{1,5})<', r.text)
+                if not found:
+                    # fallback pattern
+                    found = re.findall(r'"ticker":"([A-Z]{1,5})"', r.text)
+                for s in found:
+                    if s not in syms and s not in block:
+                        syms.append(s)
+        except Exception:
+            pass
+
+    # ── 2. Yahoo Finance most active + gainers + losers ───────────────────────
+    yahoo_urls = [
+        "https://finance.yahoo.com/markets/stocks/most-active/",
+        "https://finance.yahoo.com/markets/stocks/gainers/",
+        "https://finance.yahoo.com/markets/stocks/losers/",
+        "https://finance.yahoo.com/markets/stocks/52-week-highs/",
+    ]
+    for url in yahoo_urls:
+        try:
+            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            found = re.findall(r'"symbol":"([A-Z]{1,5})"', r.text)
             for s in found:
-                if s not in syms and len(s) <= 5 and s.isupper():
+                if s not in syms and s not in block:
                     syms.append(s)
         except Exception:
             pass
-    block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT","WITH","ALL","NEW"}
-    syms = [s for s in syms if s not in block]
-    fallback = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
-                "GOOG","JPM","V","XOM","MA","JNJ","PG","BAC","WMT","DIS","NFLX","INTC","PYPL"]
-    return list(dict.fromkeys(syms[:60] + fallback))[:80]
+
+    # ── 3. Hardcoded core watchlist always included ───────────────────────────
+    core = [
+        "SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
+        "GOOG","JPM","V","XOM","MA","JNJ","PG","BAC","WMT","DIS","NFLX","INTC",
+        "PYPL","COIN","PLTR","SOFI","MARA","RIOT","GME","AMC","SMCI","ARM","SNOW",
+        "UBER","LYFT","SNAP","SHOP","RBLX","SPOT","MU","QCOM","AVGO","CRM","ORCL",
+    ]
+    for s in core:
+        if s not in syms:
+            syms.append(s)
+
+    # Deduplicate, remove junk, cap at 300
+    clean_syms = [s for s in dict.fromkeys(syms) if 1 < len(s) <= 5 and s not in block]
+    return clean_syms[:300]
 
 
 @st.cache_data(ttl=180)
@@ -1974,14 +2022,31 @@ def live_dashboard():
         st.markdown('<div class="sc-section">Bullish &amp; Bearish Scans</div>', unsafe_allow_html=True)
 
         # Signal legend
-        st.markdown("""<div style="display:flex;gap:12px;flex-wrap:wrap;padding:4px 0 8px;
-font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.5px">
-  <span style="color:#06b6d4">■ VOL — volume spike 2x+</span>
-  <span style="color:#22c55e">■ VWAP+ — above VWAP</span>
-  <span style="color:#a78bfa">■ RS+ — outperforming SPY</span>
-  <span style="color:#fcd34d">■ 52W↑ — near 52-week high</span>
-  <span style="color:#f59e0b">■ MOM — momentum breakout</span>
-  <span style="color:#f87171">■ RS-/VWAP-/52W↓ — bearish signals</span>
+        st.markdown("""<div style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 2px 10px;">
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(6,182,212,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#06b6d4;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">VOL <span style="color:#4a4e62;font-weight:400">— volume 2x+</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#22c55e;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">VWAP+ <span style="color:#4a4e62;font-weight:400">— above VWAP</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(167,139,250,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#a78bfa;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">RS+ <span style="color:#4a4e62;font-weight:400">— outperforming SPY</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(252,211,77,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#fcd34d;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">52W↑ <span style="color:#4a4e62;font-weight:400">— near 52-week high</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(245,158,11,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#f59e0b;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">MOM <span style="color:#4a4e62;font-weight:400">— momentum breakout</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#f87171;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">RS- / VWAP- / 52W↓ <span style="color:#4a4e62;font-weight:400">— bearish signals</span></span>
+  </div>
 </div>""", unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
