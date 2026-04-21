@@ -547,104 +547,133 @@ def fetch_quotes(tickers: tuple):
 @st.cache_data(ttl=60)
 def fetch_scan_data(tickers_tuple):
     """
-    Enrich each ticker with scan signals:
-    - vol_ratio: today vol / avg vol
-    - rel_strength: stock % vs SPY % (positive = outperforming)
-    - near_52w_high: within 3% of 52-week high
-    - above_vwap: price above intraday VWAP
-    - signals: list of active signal tags
+    Compute scan signals from a single batch yf.download call.
+    Derives vol ratio, VWAP, relative strength, 52W high/low, and momentum
+    without looping individual tickers.
     """
-    tickers = list(tickers_tuple)
-    results = {}
+    import pandas as pd
+    tickers  = list(tickers_tuple)
+    results  = {}
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Fetch SPY intraday change for relative strength calc
+    # ── 1. Batch download intraday + daily in two requests ────────────────────
+    try:
+        intra_all = yf.download(
+            tickers, period="1d", interval="1m",
+            group_by="ticker", auto_adjust=True,
+            progress=False, threads=True,
+        )
+        daily_all = yf.download(
+            tickers, period="1y", interval="1d",
+            group_by="ticker", auto_adjust=True,
+            progress=False, threads=True,
+        )
+    except Exception:
+        return {}
+
+    # ── 2. Get SPY % change for relative strength ─────────────────────────────
     spy_pct = 0.0
     try:
-        spy  = yf.Ticker("SPY")
-        sh   = spy.history(period="2d", interval="1d")
-        si   = spy.history(period="1d", interval="1m")
-        if not si.empty and len(sh) >= 2:
-            spy_price = float(si.iloc[-1]["Close"])
-            spy_prev  = float(sh.iloc[-2]["Close"])
-            spy_pct   = (spy_price - spy_prev) / spy_prev * 100
+        def _get_df(all_data, sym):
+            if len(tickers) == 1:
+                return all_data
+            return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
+
+        spy_intra = _get_df(intra_all, "SPY")
+        spy_daily = _get_df(daily_all, "SPY")
+        if not spy_intra.empty and len(spy_daily) >= 2:
+            spy_now  = float(spy_intra["Close"].iloc[-1])
+            spy_prev = float(spy_daily["Close"].iloc[-2])
+            spy_pct  = (spy_now - spy_prev) / spy_prev * 100
     except Exception:
         pass
 
+    # ── 3. Per-ticker signal computation (no HTTP calls — pure DataFrame math) ─
     for t in tickers:
         try:
-            tk   = yf.Ticker(t)
-            info = tk.info or {}
+            def _df(all_data, sym):
+                if len(tickers) == 1:
+                    return all_data
+                try:
+                    return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
+                except Exception:
+                    return pd.DataFrame()
 
-            avg_vol   = info.get("averageVolume") or info.get("averageDailyVolume10Day") or 0
-            wk52_high = info.get("fiftyTwoWeekHigh")
-            wk52_low  = info.get("fiftyTwoWeekLow")
+            intra = _df(intra_all, t)
+            daily = _df(daily_all, t)
 
-            intra = tk.history(period="1d", interval="1m")
-            if intra.empty:
-                results[t] = {"vol_ratio": None, "rel_strength": None, "near_52w_high": False,
-                              "above_vwap": None, "signals": []}
+            if intra is None or intra.empty:
+                results[t] = {"signals": []}
                 continue
 
-            price     = float(intra.iloc[-1]["Close"])
+            price     = float(intra["Close"].iloc[-1])
             today_vol = int(intra["Volume"].sum()) if "Volume" in intra.columns else 0
 
-            # Volume ratio
-            vol_ratio = (today_vol / avg_vol) if avg_vol else None
+            # Avg volume from daily (last 30 days)
+            avg_vol = 0
+            if daily is not None and not daily.empty and "Volume" in daily.columns:
+                avg_vol = int(daily["Volume"].tail(30).mean())
+            vol_ratio = (today_vol / avg_vol) if avg_vol > 0 else None
 
-            # VWAP = sum(price * vol) / sum(vol)
+            # VWAP
             above_vwap = None
+            vwap_val   = None
             try:
-                typical   = (intra["High"] + intra["Low"] + intra["Close"]) / 3
-                vwap      = (typical * intra["Volume"]).cumsum() / intra["Volume"].cumsum()
-                vwap_val  = float(vwap.iloc[-1])
+                typ      = (intra["High"] + intra["Low"] + intra["Close"]) / 3
+                vwap_ser = (typ * intra["Volume"]).cumsum() / intra["Volume"].cumsum()
+                vwap_val = float(vwap_ser.iloc[-1])
                 above_vwap = price > vwap_val
             except Exception:
                 pass
 
-            # Daily pct for relative strength
-            hist  = tk.history(period="2d", interval="1d")
-            stock_pct = 0.0
-            if len(hist) >= 2:
-                prev       = float(hist.iloc[-2]["Close"])
-                stock_pct  = (price - prev) / prev * 100
+            # Daily % change and relative strength
+            stock_pct    = 0.0
+            rel_strength = 0.0
+            if daily is not None and not daily.empty and len(daily) >= 2:
+                prev      = float(daily["Close"].iloc[-2])
+                stock_pct = (price - prev) / prev * 100
+                rel_strength = stock_pct - spy_pct
 
-            rel_strength = stock_pct - spy_pct  # positive = beating SPY
+            # 52-week high/low from daily history
+            near_52w_high = False
+            at_52w_low    = False
+            if daily is not None and not daily.empty and len(daily) >= 20:
+                hi_52 = float(daily["High"].max())
+                lo_52 = float(daily["Low"].min())
+                near_52w_high = price >= hi_52 * 0.97
+                at_52w_low    = price <= lo_52 * 1.03
 
-            # 52-week high proximity
-            near_52w_high = bool(wk52_high and price >= wk52_high * 0.97)
-            at_52w_low    = bool(wk52_low  and price <= wk52_low  * 1.03)
-
-            # Build signal tags
+            # ── build signal tags ─────────────────────────────────────────────
             signals = []
             if vol_ratio and vol_ratio >= 2.0:
-                signals.append(("VOL", f"{vol_ratio:.1f}x avg vol", "#06b6d4"))
+                signals.append(("VOL",   f"{vol_ratio:.1f}x avg vol",       "#06b6d4"))
             if above_vwap is True:
-                signals.append(("VWAP+", "above VWAP", "#22c55e"))
+                signals.append(("VWAP+", "above VWAP",                      "#22c55e"))
             elif above_vwap is False:
-                signals.append(("VWAP-", "below VWAP", "#ef4444"))
+                signals.append(("VWAP-", "below VWAP",                      "#ef4444"))
             if rel_strength >= 2.0:
-                signals.append(("RS+", f"+{rel_strength:.1f}% vs SPY", "#a78bfa"))
+                signals.append(("RS+",   f"+{rel_strength:.1f}% vs SPY",    "#a78bfa"))
             elif rel_strength <= -2.0:
-                signals.append(("RS-", f"{rel_strength:.1f}% vs SPY", "#f87171"))
+                signals.append(("RS-",   f"{rel_strength:.1f}% vs SPY",     "#f87171"))
             if near_52w_high:
-                signals.append(("52W↑", "near 52-week high", "#fcd34d"))
+                signals.append(("52W↑",  "near 52-week high",               "#fcd34d"))
             if at_52w_low:
-                signals.append(("52W↓", "near 52-week low", "#f87171"))
+                signals.append(("52W↓",  "near 52-week low",                "#f87171"))
             if stock_pct >= 3.0 and vol_ratio and vol_ratio >= 1.5:
-                signals.append(("MOM", "momentum breakout", "#f59e0b"))
+                signals.append(("MOM",   "momentum breakout",               "#f59e0b"))
 
             results[t] = {
-                "vol_ratio":    vol_ratio,
-                "rel_strength": rel_strength,
+                "vol_ratio":     vol_ratio,
+                "rel_strength":  rel_strength,
                 "near_52w_high": near_52w_high,
-                "above_vwap":   above_vwap,
-                "vwap_val":     vwap_val if above_vwap is not None else None,
-                "signals":      signals,
-                "stock_pct":    stock_pct,
+                "above_vwap":    above_vwap,
+                "vwap_val":      vwap_val,
+                "signals":       signals,
+                "stock_pct":     stock_pct,
             }
         except Exception:
-            results[t] = {"vol_ratio": None, "rel_strength": None, "near_52w_high": False,
-                          "above_vwap": None, "signals": []}
+            results[t] = {"signals": []}
+
     return results
 
 
