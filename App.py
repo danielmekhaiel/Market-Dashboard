@@ -416,40 +416,131 @@ def _pg_controls(page_key, total):
 
 # ── data ──────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
-def fetch_quotes(tickers):
-    rows = []
-    for t in tickers:
-        rec = {"ticker": t, "price": None, "change": None, "pct": None,
-               "open": None, "prev_close": None, "gap_pct": None, "volume": None}
-        try:
-            if FINNHUB_API_KEY:
-                r = requests.get(f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}", timeout=15)
-                js = r.json() if r.content else {}
-                price, prev_close, open_p = js.get("c"), js.get("pc"), js.get("o")
-                if price not in (None, 0):
-                    chg = price - prev_close if prev_close else None
-                    pct = (chg / prev_close * 100) if prev_close else None
-                    gap = ((open_p - prev_close) / prev_close * 100) if (open_p and prev_close) else None
-                    rows.append({**rec, "price": price, "change": chg, "pct": pct,
-                                 "open": open_p, "prev_close": prev_close, "gap_pct": gap})
+def fetch_quotes(tickers: tuple):
+    """
+    Fetch quotes for all tickers in one batched yf.download call (fast),
+    falling back to per-ticker for any that fail or need gap data.
+    """
+    import pandas as pd
+
+    rows   = []
+    ticker_set = list(tickers)
+    # ── Batch download via yf.download (single HTTP request for all tickers) ──
+    batch_data   = {}
+    batch_prev   = {}
+    batch_open   = {}
+    batch_vol    = {}
+
+    try:
+        # Download 2 days of 1-minute data in one call
+        raw = yf.download(
+            ticker_set,
+            period="2d",
+            interval="1m",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        # daily close for prev_close
+        daily = yf.download(
+            ticker_set,
+            period="5d",
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        for t in ticker_set:
+            try:
+                # Handle both single-ticker and multi-ticker DataFrame structures
+                if len(ticker_set) == 1:
+                    intra_df = raw
+                    daily_df = daily
+                else:
+                    intra_df = raw[t] if t in raw.columns.get_level_values(0) else pd.DataFrame()
+                    daily_df = daily[t] if t in daily.columns.get_level_values(0) else pd.DataFrame()
+
+                if intra_df is None or intra_df.empty:
                     continue
-            tk = yf.Ticker(t)
-            hist  = tk.history(period="2d", interval="1d")
-            intra = tk.history(period="1d", interval="1m")
-            if not intra.empty:
-                price     = float(intra.iloc[-1]["Close"])
-                open_p    = float(intra.iloc[0]["Open"]) if "Open" in intra.columns else price
-                vol       = int(intra["Volume"].sum())   if "Volume" in intra.columns else None
-                prev_close = float(hist.iloc[-2]["Close"]) if len(hist) >= 2 else open_p
-                chg  = price - prev_close
-                pct  = (chg / prev_close * 100) if prev_close else 0
-                gap  = ((open_p - prev_close) / prev_close * 100) if prev_close else 0
-                rows.append({**rec, "price": price, "change": chg, "pct": pct,
-                             "open": open_p, "prev_close": prev_close, "gap_pct": gap, "volume": vol})
-            else:
-                rows.append(rec)
+
+                # Filter to today only for intraday
+                today_mask = intra_df.index.strftime("%Y-%m-%d") == today_str
+                today_df   = intra_df[today_mask]
+                if today_df.empty:
+                    today_df = intra_df  # use all if no today filter matches
+
+                price  = float(today_df["Close"].iloc[-1])
+                open_p = float(today_df["Open"].iloc[0])
+                vol    = int(today_df["Volume"].sum()) if "Volume" in today_df.columns else 0
+
+                # Prev close from daily
+                prev_close = price  # default
+                if daily_df is not None and not daily_df.empty and len(daily_df) >= 2:
+                    prev_close = float(daily_df["Close"].iloc[-2])
+
+                chg = price - prev_close
+                pct = (chg / prev_close * 100) if prev_close else 0
+                gap = ((open_p - prev_close) / prev_close * 100) if prev_close else 0
+
+                batch_data[t] = {
+                    "ticker": t, "price": price, "change": chg, "pct": pct,
+                    "open": open_p, "prev_close": prev_close, "gap_pct": gap, "volume": vol,
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # ── Finnhub per-ticker for any missed (or if Finnhub key available) ────────
+    missing = [t for t in ticker_set if t not in batch_data]
+    if FINNHUB_API_KEY:
+        missing = ticker_set  # Finnhub is more accurate, use it for all
+
+    def _finnhub_quote(t):
+        try:
+            r  = requests.get(
+                f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}",
+                timeout=8
+            )
+            js = r.json() if r.content else {}
+            price, prev_close, open_p = js.get("c"), js.get("pc"), js.get("o")
+            if price not in (None, 0):
+                chg = price - prev_close if prev_close else None
+                pct = (chg / prev_close * 100) if prev_close else None
+                gap = ((open_p - prev_close) / prev_close * 100) if (open_p and prev_close) else None
+                return {"ticker": t, "price": price, "change": chg, "pct": pct,
+                        "open": open_p, "prev_close": prev_close, "gap_pct": gap, "volume": None}
         except Exception:
-            rows.append(rec)
+            pass
+        return None
+
+    if FINNHUB_API_KEY and missing:
+        fh_results = {}
+        fh_threads = []
+        def _fh(sym):
+            res = _finnhub_quote(sym)
+            if res:
+                fh_results[sym] = res
+        for sym in missing:
+            th = threading.Thread(target=_fh, args=(sym,))
+            th.start()
+            fh_threads.append(th)
+        for th in fh_threads:
+            th.join(timeout=10)
+        batch_data.update(fh_results)
+
+    # Build final rows list in original order
+    for t in ticker_set:
+        if t in batch_data:
+            rows.append(batch_data[t])
+        else:
+            rows.append({"ticker": t, "price": None, "change": None, "pct": None,
+                         "open": None, "prev_close": None, "gap_pct": None, "volume": None})
     return rows
 
 
@@ -1930,46 +2021,53 @@ st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 # ── live data fragment — reruns every 30s without touching the rest of the page
 @st.fragment(run_every=30)
 def live_dashboard():
-    # Fast fetches — run inline (cached, near-instant after first load)
-    tickers      = fetch_universe()
-    quotes       = fetch_quotes(tickers)
-    news         = fetch_news()
-    index_data   = fetch_index_bar()
-    earnings_cal = fetch_earnings_calendar() or []
-    econ_cal     = fetch_econ_calendar()     or []
-
-    # Slow fetches — run in parallel threads so they don't block rendering
-    # If cache is warm they return instantly; if cold they fetch concurrently
     results = {}
 
     def _fetch(key, fn, *args):
         try:
             results[key] = fn(*args)
         except Exception:
-            results[key] = [] if key != "expected_moves" else {}
+            results[key] = {} if key in ("scan", "expmove") else []
 
+    # Step 1 — fetch universe first (fast, cached after first run)
+    tickers = fetch_universe()
+
+    # Step 2 — fire ALL slow fetches in parallel
     try:
-        _today_str     = str(datetime.now().date())
+        _today_str = str(datetime.now().date())
+        # Use cached earnings if available to get upcoming syms without blocking
+        _cached_earnings = fetch_earnings_calendar() or []
         _upcoming_syms = tuple(list(dict.fromkeys(
-            e.get("sym") for e in earnings_cal
+            e.get("sym") for e in _cached_earnings
             if e.get("sym") and e.get("date","") >= _today_str
         ))[:15])
     except Exception:
         _upcoming_syms = ()
+        _cached_earnings = []
 
     threads = [
-        threading.Thread(target=_fetch, args=("flow",    fetch_options_flow)),
-        threading.Thread(target=_fetch, args=("vol",     fetch_volume_spikes, tuple(tickers))),
-        threading.Thread(target=_fetch, args=("expmove", fetch_expected_moves, _upcoming_syms)),
-        threading.Thread(target=_fetch, args=("scan",    fetch_scan_data,      tuple(tickers))),
+        threading.Thread(target=_fetch, args=("quotes",   fetch_quotes,          tuple(tickers))),
+        threading.Thread(target=_fetch, args=("news",     fetch_news)),
+        threading.Thread(target=_fetch, args=("index",    fetch_index_bar)),
+        threading.Thread(target=_fetch, args=("earnings", fetch_earnings_calendar)),
+        threading.Thread(target=_fetch, args=("econ",     fetch_econ_calendar)),
+        threading.Thread(target=_fetch, args=("flow",     fetch_options_flow)),
+        threading.Thread(target=_fetch, args=("vol",      fetch_volume_spikes,   tuple(tickers))),
+        threading.Thread(target=_fetch, args=("expmove",  fetch_expected_moves,  _upcoming_syms)),
+        threading.Thread(target=_fetch, args=("scan",     fetch_scan_data,       tuple(tickers))),
     ]
     for t in threads: t.start()
-    for t in threads: t.join(timeout=25)
+    for t in threads: t.join(timeout=35)  # generous timeout — all run in parallel
 
-    flow_items     = results.get("flow",    [])
-    vol_spikes     = results.get("vol",     [])
-    expected_moves = results.get("expmove", {})
-    scan_data      = results.get("scan",    {})
+    quotes       = results.get("quotes",   [])
+    news         = results.get("news",     [])
+    index_data   = results.get("index",    [])
+    earnings_cal = results.get("earnings", _cached_earnings) or []
+    econ_cal     = results.get("econ",     []) or []
+    flow_items   = results.get("flow",     [])
+    vol_spikes   = results.get("vol",      [])
+    expected_moves = results.get("expmove",{})
+    scan_data    = results.get("scan",     {})
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
