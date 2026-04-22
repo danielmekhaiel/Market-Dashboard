@@ -1990,54 +1990,55 @@ def render_calendar(earnings, econ, expected_moves=None):
         upcoming = [e for e in earnings if e.get("date","") >= today_str and e.get("sym")][:5]
         if upcoming:
             st.markdown("""<style>
-.earn-cards { display:flex; flex-direction:column; gap:6px; padding:8px 10px; }
+.earn-cards { display:flex; flex-direction:column; gap:5px; padding:8px 10px; max-width:420px; }
 .earn-card {
     background:#13161e;
-    border:1px solid rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.08);
     border-radius:6px;
     overflow:hidden;
     font-family:'DM Sans',sans-serif;
+    width:100%;
 }
 .earn-card-head {
     display:flex; align-items:center; justify-content:space-between;
-    padding:6px 10px;
+    padding:5px 10px;
     background:#0e1017;
-    border-bottom:1px solid rgba(255,255,255,.06);
+    border-bottom:1px solid rgba(255,255,255,.07);
 }
 .earn-card-sym {
     font-family:'IBM Plex Mono',monospace;
-    font-size:13px; font-weight:700; color:#ffffff; letter-spacing:.5px;
+    font-size:14px; font-weight:700; color:#ffffff; letter-spacing:.5px;
 }
 .earn-card-date-pill {
     font-family:'IBM Plex Mono',monospace;
-    font-size:9px; color:#6b7280; letter-spacing:.5px;
+    font-size:9px; color:#6b7280; letter-spacing:.3px;
 }
 .earn-card-today-pill {
     font-family:'IBM Plex Mono',monospace;
     font-size:9px; font-weight:700; color:#00c4b4;
     background:rgba(0,196,180,.1); border:1px solid rgba(0,196,180,.3);
-    padding:1px 6px; border-radius:3px; letter-spacing:.5px;
+    padding:1px 5px; border-radius:3px; letter-spacing:.3px;
 }
 .earn-card-body {
-    display:grid; grid-template-columns:100px 120px 90px;
+    display:grid; grid-template-columns:90px 110px 80px;
     gap:0;
 }
 .earn-card-cell {
-    padding:5px 10px;
+    padding:5px 8px;
     border-right:1px solid rgba(255,255,255,.05);
 }
 .earn-card-cell:last-child { border-right:none; }
 .earn-card-lbl {
-    font-size:9px; font-weight:600; color:#4a4e62;
+    font-size:8px; font-weight:700; color:#4a4e62;
     text-transform:uppercase; letter-spacing:1px;
     margin-bottom:2px;
 }
 .earn-card-val {
     font-family:'IBM Plex Mono',monospace;
-    font-size:14px; font-weight:700; color:#ffffff; line-height:1.2;
+    font-size:13px; font-weight:700; color:#ffffff; line-height:1.2;
 }
-.earn-bmo { color:#00c4b4; }
-.earn-amc { color:#f59e0b; }
+.earn-bmo { color:#00c4b4; font-size:11px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
+.earn-amc { color:#f59e0b; font-size:11px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
 .earn-move-hi { color:#f87171; }
 .earn-move-md { color:#fcd34d; }
 .earn-move-lo { color:#9ca3af; }
@@ -2166,7 +2167,6 @@ def live_dashboard():
         "econ":     (fetch_econ_calendar,     ()),
         "flow":     (fetch_options_flow,      ()),
         "vol":      (fetch_volume_spikes,     (tuple(tickers),)),
-        "expmove":  (fetch_expected_moves,    (_upcoming_syms,)),
     }
 
     results = {}
@@ -2174,19 +2174,32 @@ def live_dashboard():
         try:
             results[key] = fn(*args)
         except Exception:
-            results[key] = {} if key in ("market","expmove") else []
+            results[key] = {} if key == "market" else []
+
+    # Now compute expected moves using fresh earnings data
+    earnings_cal = results.get("earnings", _cached_earnings) or []
+    try:
+        _today_str2  = str(datetime.now().date())
+        _fresh_syms  = tuple(list(dict.fromkeys(
+            e.get("sym") for e in earnings_cal
+            if e.get("sym") and e.get("date","") >= _today_str2
+        ))[:15])
+    except Exception:
+        _fresh_syms = _upcoming_syms
+
+    try:
+        expected_moves = fetch_expected_moves(_fresh_syms)
+    except Exception:
+        expected_moves = {}
 
     market_data  = results.get("market",   {})
     quotes       = market_data.get("quotes", [])
     scan_data    = market_data.get("scan",   {})
-
     news         = results.get("news",     [])
     index_data   = results.get("index",    [])
-    earnings_cal = results.get("earnings", _cached_earnings) or []
     econ_cal     = results.get("econ",     []) or []
     flow_items   = results.get("flow",     [])
     vol_spikes   = results.get("vol",      [])
-    expected_moves = results.get("expmove",{})
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
