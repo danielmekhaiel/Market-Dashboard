@@ -2,7 +2,7 @@ import os
 import re
 import html
 import time
-import threading
+import concurrent.futures
 import requests
 import streamlit as st
 import yfinance as yf
@@ -521,17 +521,13 @@ def fetch_quotes(tickers: tuple):
 
     if FINNHUB_API_KEY and missing:
         fh_results = {}
-        fh_threads = []
         def _fh(sym):
             res = _finnhub_quote(sym)
             if res:
                 fh_results[sym] = res
-        for sym in missing:
-            th = threading.Thread(target=_fh, args=(sym,))
-            th.start()
-            fh_threads.append(th)
-        for th in fh_threads:
-            th.join(timeout=10)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+            futs = [ex.submit(_fh, sym) for sym in missing]
+            concurrent.futures.wait(futs, timeout=10)
         batch_data.update(fh_results)
 
     # Build final rows list in original order
@@ -1715,9 +1711,9 @@ def fetch_earnings_calendar():
         except Exception:
             pass
 
-    threads = [threading.Thread(target=_yf_earn, args=(s,)) for s in watchlist]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=20)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        futs = [ex.submit(_yf_earn, s) for s in watchlist]
+        concurrent.futures.wait(futs, timeout=20)
 
     return sorted(items, key=lambda x: x["date"])[:60]
 
@@ -2238,19 +2234,30 @@ def live_dashboard():
         _upcoming_syms = ()
         _cached_earnings = []
 
-    threads = [
-        threading.Thread(target=_fetch, args=("quotes",   fetch_quotes,          tuple(tickers))),
-        threading.Thread(target=_fetch, args=("news",     fetch_news)),
-        threading.Thread(target=_fetch, args=("index",    fetch_index_bar)),
-        threading.Thread(target=_fetch, args=("earnings", fetch_earnings_calendar)),
-        threading.Thread(target=_fetch, args=("econ",     fetch_econ_calendar)),
-        threading.Thread(target=_fetch, args=("flow",     fetch_options_flow)),
-        threading.Thread(target=_fetch, args=("vol",      fetch_volume_spikes,   tuple(tickers))),
-        threading.Thread(target=_fetch, args=("expmove",  fetch_expected_moves,  _upcoming_syms)),
-        threading.Thread(target=_fetch, args=("scan",     fetch_scan_data,       tuple(tickers))),
-    ]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=35)  # generous timeout — all run in parallel
+    fetch_jobs = {
+        "quotes":   (fetch_quotes,           (tuple(tickers),)),
+        "news":     (fetch_news,             ()),
+        "index":    (fetch_index_bar,        ()),
+        "earnings": (fetch_earnings_calendar,()),
+        "econ":     (fetch_econ_calendar,    ()),
+        "flow":     (fetch_options_flow,     ()),
+        "vol":      (fetch_volume_spikes,    (tuple(tickers),)),
+        "expmove":  (fetch_expected_moves,   (_upcoming_syms,)),
+        "scan":     (fetch_scan_data,        (tuple(tickers),)),
+    }
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as ex:
+        futures = {
+            ex.submit(fn, *args): key
+            for key, (fn, args) in fetch_jobs.items()
+        }
+        for fut in concurrent.futures.as_completed(futures, timeout=35):
+            key = futures[fut]
+            try:
+                results[key] = fut.result()
+            except Exception:
+                results[key] = {} if key in ("scan","expmove") else []
 
     quotes       = results.get("quotes",   [])
     news         = results.get("news",     [])
