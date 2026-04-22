@@ -26,7 +26,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap');
 
-.stApp { background: #0d0f10; color: #e2e4e9; }
+.stApp { background: #000000; color: #e2e4e9; }
 *, *::before, *::after { box-sizing: border-box; }
 
 .sc-wrap { max-width: 1440px; margin: 0 auto; padding: 0 16px 60px; font-family: 'DM Sans', sans-serif; }
@@ -77,16 +77,16 @@ st.markdown("""
 
 /* panel */
 .sc-panel {
-    background: #0f1117;
-    border: 1px solid rgba(255,255,255,.08);
+    background: #0a0a0a;
+    border: 1px solid rgba(255,255,255,.1);
     border-radius: 10px; overflow: hidden;
-    box-shadow: 0 2px 20px rgba(0,0,0,.35);
+    box-shadow: 0 2px 20px rgba(0,0,0,.6);
 }
-.sc-panel-bull   { border-top: 2px solid #16a34a; }
-.sc-panel-bear   { border-top: 2px solid #dc2626; }
-.sc-panel-gap-up { border-top: 2px solid #22c55e; }
-.sc-panel-gap-dn { border-top: 2px solid #ef4444; }
-.sc-panel-news   { border-top: 2px solid #6366f1; }
+.sc-panel-bull   { border-top: 2px solid #22c55e; }
+.sc-panel-bear   { border-top: 2px solid #ef4444; }
+.sc-panel-gap-up { border-top: 2px solid #4ade80; }
+.sc-panel-gap-dn { border-top: 2px solid #f87171; }
+.sc-panel-news   { border-top: 2px solid #818cf8; }
 
 /* panel header */
 .sc-panel-head {
@@ -662,6 +662,43 @@ def fetch_scan_data(tickers_tuple):
             if stock_pct >= 3.0 and vol_ratio and vol_ratio >= 1.5:
                 signals.append(("MOM",   "momentum breakout",               "#f59e0b"))
 
+            # ── daily bull/bear flag detection ────────────────────────────────
+            # Pole  = strong directional move over 5–15 days
+            # Flag  = tight consolidation in last 5 days (low ATR, small range)
+            # Entry = today breaking above/below flag channel
+            try:
+                if daily is not None and not daily.empty and len(daily) >= 25:
+                    # Pole: days -25 to -5 (20-day move before recent consolidation)
+                    pole_df    = daily.iloc[-25:-5]
+                    flag_df    = daily.iloc[-5:]   # last 5 days = flag/consolidation
+
+                    pole_start = float(pole_df["Close"].iloc[0])
+                    pole_end   = float(pole_df["Close"].iloc[-1])
+                    pole_pct   = (pole_end - pole_start) / pole_start * 100
+
+                    # Flag tightness: ATR of flag period vs ATR of pole period
+                    pole_atr   = float((pole_df["High"] - pole_df["Low"]).mean())
+                    flag_atr   = float((flag_df["High"]  - flag_df["Low"]).mean())
+                    tight      = pole_atr > 0 and (flag_atr / pole_atr) < 0.5
+
+                    # Flag should be slightly counter-trend (pullback), not a reversal
+                    flag_retrace = (float(flag_df["Close"].iloc[-1]) - float(flag_df["Close"].iloc[0])) / pole_end * 100
+                    mild_pullback = -8 < flag_retrace < 2  # bull: slight dip; bear: slight bounce
+
+                    # Volume: pole had higher vol than flag (institutional accumulation then rest)
+                    pole_vol   = float(pole_df["Volume"].mean()) if "Volume" in pole_df.columns else 0
+                    flag_vol   = float(flag_df["Volume"].mean())  if "Volume" in flag_df.columns else 0
+                    vol_confirms = pole_vol > 0 and flag_vol < pole_vol
+
+                    if pole_pct >= 8.0 and tight and mild_pullback and vol_confirms:
+                        tip = f"daily bull flag — {pole_pct:.1f}% pole, consolidating {abs(flag_retrace):.1f}%"
+                        signals.insert(0, ("BULL🚩", tip, "#22c55e"))
+                    elif pole_pct <= -8.0 and tight and vol_confirms:
+                        tip = f"daily bear flag — {abs(pole_pct):.1f}% pole, consolidating"
+                        signals.insert(0, ("BEAR🚩", tip, "#ef4444"))
+            except Exception:
+                pass
+
             results[t] = {
                 "vol_ratio":     vol_ratio,
                 "rel_strength":  rel_strength,
@@ -1031,7 +1068,7 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
     start = (page - 1) * ROWS_PER_PAGE
 
     # ── filter by signal if selected ─────────────────────────────────────────
-    sig_options = ["All", "VOL 2x+", "VWAP+", "RS+ vs SPY", "Near 52W High", "Momentum"]
+    sig_options = ["All", "VOL 2x+", "VWAP+", "RS+ vs SPY", "Near 52W High", "Momentum", "Bull Flag", "Bear Flag"]
     sig_filter  = st.selectbox("Signal filter", sig_options,
                                key=f"{page_key}_sig", label_visibility="collapsed")
 
@@ -1043,6 +1080,8 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
         if sig_filter == "RS+ vs SPY":     return "RS+" in sigs
         if sig_filter == "Near 52W High":  return "52W↑" in sigs
         if sig_filter == "Momentum":       return "MOM" in sigs
+        if sig_filter == "Bull Flag":      return "BULL🚩" in sigs
+        if sig_filter == "Bear Flag":      return "BEAR🚩" in sigs
         return True
 
     filtered   = [q for q in rows if _matches(q)]
@@ -1505,6 +1544,14 @@ def render_volume_spikes(spikes):
 def fetch_earnings_calendar():
     items = []
     today = datetime.now().date()
+    seen  = set()
+
+    def _add(sym, date_str, timing="—", eps="—"):
+        key = f"{sym}_{date_str}"
+        if key not in seen and sym and date_str >= str(today):
+            seen.add(key)
+            items.append({"sym": sym, "date": date_str, "timing": timing,
+                          "eps_est": eps, "type": "earnings"})
 
     # ── 1. Finnhub (best, if key provided) ───────────────────────────────────
     if FINNHUB_API_KEY:
@@ -1517,132 +1564,164 @@ def fetch_earnings_calendar():
                 timeout=15
             )
             js = r.json() if r.content else {}
-            for x in (js.get("earningsCalendar") or [])[:60]:
-                sym     = str(x.get("symbol","")).upper()
-                date_s  = str(x.get("date",""))
-                hour    = str(x.get("hour","")).lower()
-                eps_est = x.get("epsEstimate")
-                if sym and date_s:
-                    items.append({
-                        "sym": sym, "date": date_s,
-                        "timing": "BMO" if "before" in hour else ("AMC" if "after" in hour else "—"),
-                        "eps_est": f"${eps_est:.2f}" if eps_est else "—",
-                        "type": "earnings",
-                    })
+            for x in (js.get("earningsCalendar") or [])[:80]:
+                sym    = str(x.get("symbol","")).upper()
+                date_s = str(x.get("date",""))
+                hour   = str(x.get("hour","")).lower()
+                eps    = x.get("epsEstimate")
+                timing = "BMO" if "before" in hour else ("AMC" if "after" in hour else "—")
+                eps_s  = f"${eps:.2f}" if eps else "—"
+                _add(sym, date_s, timing, eps_s)
             if items:
                 return sorted(items, key=lambda x: x["date"])
         except Exception:
             pass
 
-    # ── 2. Scrape Yahoo Finance earnings calendar (no key needed) ─────────────
+    # ── 2. Scrape earnings-calendar from multiple free sources ────────────────
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122"}
+
+    # Source A: earningswhispers.com calendar
     try:
         from bs4 import BeautifulSoup
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        r = requests.get("https://finance.yahoo.com/calendar/earnings", headers=headers, timeout=20)
+        r = requests.get("https://www.earningswhispers.com/stocks", headers=headers, timeout=15)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, "html.parser")
-            # Yahoo renders a table with id="cal-res-table" or class containing "calendar"
-            table = (soup.find("table", {"id": "cal-res-table"}) or
-                     soup.find("table", class_=re.compile(r"W\(100\%\)")) or
-                     soup.find("table"))
-            if table:
-                for row in table.find_all("tr")[1:]:
-                    cols = row.find_all("td")
-                    if len(cols) >= 3:
-                        sym      = cols[0].get_text(strip=True).upper()
-                        company  = cols[1].get_text(strip=True) if len(cols) > 1 else ""
-                        date_raw = cols[2].get_text(strip=True) if len(cols) > 2 else ""
-                        eps_est  = cols[3].get_text(strip=True) if len(cols) > 3 else "—"
-                        timing   = cols[4].get_text(strip=True) if len(cols) > 4 else "—"
-                        if not sym or not date_raw:
+            for el in soup.find_all(class_=re.compile(r"company|earnings-item|cal-item")):
+                sym_el = el.find(class_=re.compile(r"ticker|symbol")) or el.find("span")
+                date_el = el.find(class_=re.compile(r"date|when"))
+                if sym_el and date_el:
+                    sym = sym_el.get_text(strip=True).upper()[:6]
+                    raw_date = date_el.get_text(strip=True)
+                    for fmt in ["%b %d, %Y","%Y-%m-%d","%m/%d/%Y","%b %d"]:
+                        try:
+                            parsed = datetime.strptime(raw_date[:12], fmt)
+                            d = parsed.replace(year=today.year).date()
+                            if d < today: d = d.replace(year=today.year+1)
+                            _add(sym, str(d))
+                            break
+                        except Exception:
                             continue
-                        # Parse date — Yahoo uses "Apr 18, 2026" or "2026-04-18"
-                        date_val = None
-                        for fmt in ["%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"]:
-                            try:
-                                date_val = datetime.strptime(date_raw[:12].strip(), fmt).date()
-                                break
-                            except ValueError:
-                                continue
-                        if date_val and str(date_val) >= str(today):
-                            # Normalize EPS
-                            if eps_est in ("N/A","--","","None"): eps_est = "—"
-                            elif not eps_est.startswith("$"):
-                                try: eps_est = f"${float(eps_est):.2f}"
-                                except Exception: pass
-                            # Normalize timing
-                            timing_norm = "BMO" if any(x in timing.lower() for x in ("before","bmo","morning")) \
-                                     else "AMC" if any(x in timing.lower() for x in ("after","amc","close")) \
-                                     else "—"
-                            items.append({
-                                "sym": sym[:6], "date": str(date_val),
-                                "timing": timing_norm,
-                                "eps_est": eps_est,
-                                "type": "earnings",
-                            })
-            if items:
-                return sorted(items, key=lambda x: x["date"])[:40]
     except Exception:
         pass
 
-    # ── 3. yfinance earnings_dates (most reliable yfinance method) ───────────
+    # Source B: Yahoo Finance calendar JSON API
+    try:
+        for offset in range(7):
+            d = today + __import__("datetime").timedelta(days=offset)
+            url = f"https://finance.yahoo.com/calendar/earnings?day={d.strftime('%Y-%m-%d')}"
+            r   = requests.get(url, headers=headers, timeout=15)
+            if r.status_code != 200:
+                continue
+            # Parse JSON embedded in page
+            matches = re.findall(r'"symbol":"([A-Z]{1,6})"[^}]*"startdatetime":"(\d{4}-\d{2}-\d{2})', r.text)
+            for sym, date_str in matches:
+                _add(sym, date_str)
+            # Also parse HTML table
+            try:
+                from bs4 import BeautifulSoup
+                soup  = BeautifulSoup(r.text, "html.parser")
+                table = soup.find("table")
+                if table:
+                    for row in table.find_all("tr")[1:]:
+                        cols = row.find_all("td")
+                        if len(cols) >= 2:
+                            sym = cols[0].get_text(strip=True).upper()[:6]
+                            timing_raw = cols[4].get_text(strip=True) if len(cols) > 4 else ""
+                            timing = "BMO" if "before" in timing_raw.lower() else \
+                                     "AMC" if "after"  in timing_raw.lower() else "—"
+                            eps_raw = cols[3].get_text(strip=True) if len(cols) > 3 else "—"
+                            try:    eps_s = f"${float(eps_raw):.2f}"
+                            except: eps_s = "—"
+                            _add(sym, str(d), timing, eps_s)
+            except Exception:
+                pass
+            if len(items) >= 20:
+                break
+    except Exception:
+        pass
+
+    # Source C: marketbeat earnings calendar
+    try:
+        from bs4 import BeautifulSoup
+        r = requests.get("https://www.marketbeat.com/earnings/", headers=headers, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "html.parser")
+            for row in soup.find_all("tr"):
+                cols = row.find_all("td")
+                if len(cols) >= 2:
+                    sym_el = cols[0].find("a") or cols[0]
+                    sym    = sym_el.get_text(strip=True).upper()[:6]
+                    date_raw = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                    for fmt in ["%m/%d/%Y","%b %d, %Y","%Y-%m-%d"]:
+                        try:
+                            d = datetime.strptime(date_raw[:12], fmt).date()
+                            _add(sym, str(d))
+                            break
+                        except Exception:
+                            continue
+    except Exception:
+        pass
+
+    if items:
+        return sorted(items, key=lambda x: x["date"])[:60]
+
+    # ── 3. yfinance batch fallback ────────────────────────────────────────────
     watchlist = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","JPM",
                  "NFLX","BAC","V","XOM","MA","GS","MS","WFC","C","UNH","JNJ",
                  "PG","KO","PEP","WMT","HD","CVX","LLY","ABBV","MRK","TMO",
                  "DIS","INTC","PYPL","CRM","COIN","PLTR","ORCL","ADBE","QCOM",
                  "UBER","SNAP","SHOP","RBLX","SPOT","ARM","SMCI","MU","AVGO",
                  "CAT","DE","BA","RTX","LMT","GE","MMM","HON","IBM","CSCO"]
-    for sym in watchlist:
+
+    def _yf_earn(sym):
         try:
             tk = yf.Ticker(sym)
-            # earnings_dates is the most reliable in yfinance 0.2+
+            # Try earnings_dates first
             try:
                 ed = tk.earnings_dates
                 if ed is not None and not ed.empty:
-                    # Filter to future dates only
                     ed_reset = ed.reset_index()
                     date_col = ed_reset.columns[0]
                     for _, row in ed_reset.iterrows():
                         raw = row[date_col]
                         try:
-                            d = raw.date() if hasattr(raw, "date") else datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+                            d = raw.date() if hasattr(raw,"date") else \
+                                datetime.strptime(str(raw)[:10],"%Y-%m-%d").date()
                             if d >= today:
-                                eps = row.get("EPS Estimate", row.get("epsEstimate"))
-                                eps_str = f"${float(eps):.2f}" if eps and str(eps) not in ("nan","None","") else "—"
-                                items.append({"sym": sym, "date": str(d), "timing": "—", "eps_est": eps_str, "type": "earnings"})
-                                break  # only take next upcoming date
+                                eps = row.get("EPS Estimate") or row.get("epsEstimate")
+                                eps_s = f"${float(eps):.2f}" if eps and str(eps) not in ("nan","None","") else "—"
+                                _add(sym, str(d), "—", eps_s)
+                                return
                         except Exception:
                             continue
-                    continue
             except Exception:
                 pass
-
-            # Fallback to info dict
+            # Try info dict
             info = tk.info or {}
-            for key in ("earningsDate", "earningsTimestamp", "nextEarningsDate"):
+            for key in ("earningsDate","earningsTimestamp","nextEarningsDate"):
                 raw = info.get(key)
-                if not raw:
-                    continue
+                if not raw: continue
                 try:
-                    if isinstance(raw, (int, float)):
-                        d = datetime.fromtimestamp(raw).date()
-                    elif isinstance(raw, str):
-                        d = datetime.strptime(raw[:10], "%Y-%m-%d").date()
-                    elif hasattr(raw, "date"):
-                        d = raw.date()
-                    else:
-                        continue
+                    if isinstance(raw,(int,float)): d = datetime.fromtimestamp(raw).date()
+                    elif isinstance(raw,str):        d = datetime.strptime(raw[:10],"%Y-%m-%d").date()
+                    elif hasattr(raw,"date"):        d = raw.date()
+                    else: continue
                     if d >= today:
                         eps = info.get("forwardEps")
-                        items.append({"sym": sym, "date": str(d), "timing": "—",
-                                      "eps_est": f"${eps:.2f}" if eps else "—", "type": "earnings"})
-                    break
+                        _add(sym, str(d), "—", f"${eps:.2f}" if eps else "—")
+                    return
                 except Exception:
                     continue
         except Exception:
-            continue
+            pass
 
-    return sorted(items, key=lambda x: x["date"])[:40]
+    threads = [threading.Thread(target=_yf_earn, args=(s,)) for s in watchlist]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=20)
+
+    return sorted(items, key=lambda x: x["date"])[:60]
+
+
 
 
 @st.cache_data(ttl=1800)
@@ -2235,29 +2314,33 @@ def live_dashboard():
 
         # Signal legend
         st.markdown("""<div style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 2px 10px;">
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(6,182,212,.25);border-radius:6px;padding:5px 10px">
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(6,182,212,.25);border-radius:6px;padding:5px 10px">
     <span style="width:8px;height:8px;border-radius:2px;background:#06b6d4;flex-shrink:0;display:inline-block"></span>
     <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">VOL <span style="color:#4a4e62;font-weight:400">— volume 2x+</span></span>
   </div>
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:5px 10px">
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:5px 10px">
     <span style="width:8px;height:8px;border-radius:2px;background:#22c55e;flex-shrink:0;display:inline-block"></span>
     <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">VWAP+ <span style="color:#4a4e62;font-weight:400">— above VWAP</span></span>
   </div>
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(167,139,250,.25);border-radius:6px;padding:5px 10px">
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(167,139,250,.25);border-radius:6px;padding:5px 10px">
     <span style="width:8px;height:8px;border-radius:2px;background:#a78bfa;flex-shrink:0;display:inline-block"></span>
     <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">RS+ <span style="color:#4a4e62;font-weight:400">— outperforming SPY</span></span>
   </div>
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(252,211,77,.25);border-radius:6px;padding:5px 10px">
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(252,211,77,.25);border-radius:6px;padding:5px 10px">
     <span style="width:8px;height:8px;border-radius:2px;background:#fcd34d;flex-shrink:0;display:inline-block"></span>
     <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">52W↑ <span style="color:#4a4e62;font-weight:400">— near 52-week high</span></span>
   </div>
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(245,158,11,.25);border-radius:6px;padding:5px 10px">
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(245,158,11,.25);border-radius:6px;padding:5px 10px">
     <span style="width:8px;height:8px;border-radius:2px;background:#f59e0b;flex-shrink:0;display:inline-block"></span>
     <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">MOM <span style="color:#4a4e62;font-weight:400">— momentum breakout</span></span>
   </div>
-  <div style="display:flex;align-items:center;gap:6px;background:#0f1117;border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:5px 10px">
-    <span style="width:8px;height:8px;border-radius:2px;background:#f87171;flex-shrink:0;display:inline-block"></span>
-    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">RS- / VWAP- / 52W↓ <span style="color:#4a4e62;font-weight:400">— bearish signals</span></span>
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#22c55e;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">BULL🚩 <span style="color:#6b7280;font-weight:400">— bull flag pattern</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;background:#0a0a0a;border:1px solid rgba(239,68,68,.25);border-radius:6px;padding:5px 10px">
+    <span style="width:8px;height:8px;border-radius:2px;background:#ef4444;flex-shrink:0;display:inline-block"></span>
+    <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:#c8cad6;font-weight:500">BEAR🚩 <span style="color:#6b7280;font-weight:400">— bear flag pattern</span></span>
   </div>
 </div>""", unsafe_allow_html=True)
 
