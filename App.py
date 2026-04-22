@@ -1531,8 +1531,18 @@ def fetch_earnings_calendar():
 
     def _yf_earn(sym):
         try:
-            tk = yf.Ticker(sym)
-            # Try earnings_dates first
+            tk   = yf.Ticker(sym)
+
+            # Get EPS from fast_info or info
+            eps_val = None
+            timing  = "—"
+            try:
+                fi = tk.fast_info
+                price = getattr(fi, "last_price", None)
+            except Exception:
+                price = None
+
+            # Try earnings_dates first (most reliable for dates)
             try:
                 ed = tk.earnings_dates
                 if ed is not None and not ed.empty:
@@ -1545,29 +1555,39 @@ def fetch_earnings_calendar():
                                 datetime.strptime(str(raw)[:10],"%Y-%m-%d").date()
                             if d >= today:
                                 eps = row.get("EPS Estimate") or row.get("epsEstimate")
-                                eps_s = f"${float(eps):.2f}" if eps and str(eps) not in ("nan","None","") else "—"
-                                _add(sym, str(d), "—", eps_s)
+                                if eps and str(eps) not in ("nan","None",""):
+                                    try: eps_val = f"${float(eps):.2f}"
+                                    except: pass
+                                _add(sym, str(d), timing, eps_val or "—")
                                 return
                         except Exception:
                             continue
             except Exception:
                 pass
-            # Try info dict
-            info = tk.info or {}
-            for key in ("earningsDate","earningsTimestamp","nextEarningsDate"):
-                raw = info.get(key)
-                if not raw: continue
-                try:
-                    if isinstance(raw,(int,float)): d = datetime.fromtimestamp(raw).date()
-                    elif isinstance(raw,str):        d = datetime.strptime(raw[:10],"%Y-%m-%d").date()
-                    elif hasattr(raw,"date"):        d = raw.date()
-                    else: continue
-                    if d >= today:
-                        eps = info.get("forwardEps")
-                        _add(sym, str(d), "—", f"${eps:.2f}" if eps else "—")
-                    return
-                except Exception:
-                    continue
+
+            # Fallback: info dict for date + EPS
+            try:
+                info = tk.info or {}
+                eps_raw = info.get("forwardEps") or info.get("trailingEps")
+                if eps_raw:
+                    try: eps_val = f"${float(eps_raw):.2f}"
+                    except: pass
+
+                for key in ("earningsDate","earningsTimestamp","nextEarningsDate"):
+                    raw = info.get(key)
+                    if not raw: continue
+                    try:
+                        if isinstance(raw,(int,float)): d = datetime.fromtimestamp(raw).date()
+                        elif isinstance(raw,str):        d = datetime.strptime(raw[:10],"%Y-%m-%d").date()
+                        elif hasattr(raw,"date"):        d = raw.date()
+                        else: continue
+                        if d >= today:
+                            _add(sym, str(d), timing, eps_val or "—")
+                        return
+                    except Exception:
+                        continue
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1719,56 +1739,83 @@ def fetch_econ_calendar():
 @st.cache_data(ttl=300)
 def fetch_expected_moves(syms):
     """
-    For each symbol, calculate expected move from ATM straddle on the
-    nearest options expiration. Returns dict: sym -> {move_pct, move_dollar, price, exp}
+    Calculate expected move from ATM straddle on nearest expiry.
+    Uses yf.download for price (fast) then option_chain per ticker.
     """
+    import pandas as pd
     results = {}
+    if not syms:
+        return results
+
+    # Get current prices in one batch call
+    prices = {}
+    try:
+        raw = yf.download(list(syms), period="1d", interval="1d",
+                          group_by="ticker", auto_adjust=True,
+                          progress=False, threads=False)
+        for sym in syms:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    df = raw[sym] if sym in raw.columns.get_level_values(0) else pd.DataFrame()
+                else:
+                    df = raw
+                if not df.empty:
+                    prices[sym] = float(df["Close"].iloc[-1])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     for sym in syms:
         try:
-            tk    = yf.Ticker(sym)
-            info  = tk.info or {}
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
-            if not price:
-                hist  = tk.history(period="1d", interval="1m")
-                price = float(hist.iloc[-1]["Close"]) if not hist.empty else None
+            price = prices.get(sym)
             if not price:
                 continue
 
+            tk   = yf.Ticker(sym)
             exps = tk.options
             if not exps:
                 continue
 
-            # Use nearest expiration
-            exp = exps[0]
+            # Find nearest expiry that's at least 3 days out
+            today = datetime.now().date()
+            exp = None
+            for e in exps:
+                try:
+                    exp_date = datetime.strptime(e, "%Y-%m-%d").date()
+                    if (exp_date - today).days >= 3:
+                        exp = e
+                        break
+                except Exception:
+                    exp = e
+                    break
+            if not exp:
+                exp = exps[0]
+
             chain = tk.option_chain(exp)
             calls = chain.calls
             puts  = chain.puts
             if calls is None or puts is None or calls.empty or puts.empty:
                 continue
 
-            # Find ATM strike (closest to current price)
-            strikes = calls["strike"].tolist()
-            atm_strike = min(strikes, key=lambda s: abs(s - price))
-
-            atm_call = calls[calls["strike"] == atm_strike]
-            atm_put  = puts[puts["strike"]  == atm_strike]
+            strikes     = calls["strike"].tolist()
+            atm_strike  = min(strikes, key=lambda s: abs(s - price))
+            atm_call    = calls[calls["strike"] == atm_strike]
+            atm_put     = puts[puts["strike"]   == atm_strike]
             if atm_call.empty or atm_put.empty:
                 continue
 
             call_price = float(atm_call.iloc[0].get("lastPrice", 0) or 0)
             put_price  = float(atm_put.iloc[0].get("lastPrice",  0) or 0)
             straddle   = call_price + put_price
-
             if straddle <= 0:
                 continue
 
-            move_pct    = (straddle / price) * 100
             results[sym] = {
-                "move_dollar": straddle,
-                "move_pct":    move_pct,
+                "move_dollar": round(straddle, 2),
+                "move_pct":    round((straddle / price) * 100, 2),
                 "price":       price,
                 "exp":         exp,
-                "straddle":    straddle,
             }
         except Exception:
             continue
@@ -1990,14 +2037,14 @@ def render_calendar(earnings, econ, expected_moves=None):
         upcoming = [e for e in earnings if e.get("date","") >= today_str and e.get("sym")][:5]
         if upcoming:
             st.markdown("""<style>
-.earn-cards { display:flex; flex-direction:column; gap:5px; padding:8px 10px; max-width:420px; }
+.earn-cards { display:flex; flex-direction:column; gap:5px; padding:8px 10px; }
 .earn-card {
     background:#13161e;
     border:1px solid rgba(255,255,255,.08);
     border-radius:6px;
     overflow:hidden;
     font-family:'DM Sans',sans-serif;
-    width:100%;
+    max-width:400px;
 }
 .earn-card-head {
     display:flex; align-items:center; justify-content:space-between;
@@ -2100,7 +2147,9 @@ def render_calendar(earnings, econ, expected_moves=None):
   </div>
 </div>"""
             cards_html += '</div>'
-            st.markdown(cards_html, unsafe_allow_html=True)
+            col_cards, col_pad = st.columns([1, 1])
+            with col_cards:
+                st.markdown(cards_html, unsafe_allow_html=True)
 
 
 # ── market index summary bar ──────────────────────────────────────────────────
