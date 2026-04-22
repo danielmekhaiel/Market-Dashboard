@@ -415,298 +415,177 @@ def _pg_controls(page_key, total):
 
 # ── data ──────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
-def fetch_quotes(tickers: tuple):
+def fetch_market_data(tickers_tuple):
     """
-    Fetch quotes for all tickers in one batched yf.download call (fast),
-    falling back to per-ticker for any that fail or need gap data.
-    """
-    import pandas as pd
-
-    rows   = []
-    ticker_set = list(tickers)
-    # ── Batch download via yf.download (single HTTP request for all tickers) ──
-    batch_data   = {}
-    batch_prev   = {}
-    batch_open   = {}
-    batch_vol    = {}
-
-    try:
-        # Download 2 days of 1-minute data in one call
-        raw = yf.download(
-            ticker_set,
-            period="2d",
-            interval="1m",
-            group_by="ticker",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-        # daily close for prev_close
-        daily = yf.download(
-            ticker_set,
-            period="5d",
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-
-        today_str = datetime.now().strftime("%Y-%m-%d")
-
-        for t in ticker_set:
-            try:
-                # Handle both single-ticker and multi-ticker DataFrame structures
-                if len(ticker_set) == 1:
-                    intra_df = raw
-                    daily_df = daily
-                else:
-                    intra_df = raw[t] if t in raw.columns.get_level_values(0) else pd.DataFrame()
-                    daily_df = daily[t] if t in daily.columns.get_level_values(0) else pd.DataFrame()
-
-                if intra_df is None or intra_df.empty:
-                    continue
-
-                # Filter to today only for intraday
-                today_mask = intra_df.index.strftime("%Y-%m-%d") == today_str
-                today_df   = intra_df[today_mask]
-                if today_df.empty:
-                    today_df = intra_df  # use all if no today filter matches
-
-                price  = float(today_df["Close"].iloc[-1])
-                open_p = float(today_df["Open"].iloc[0])
-                vol    = int(today_df["Volume"].sum()) if "Volume" in today_df.columns else 0
-
-                # Prev close from daily
-                prev_close = price  # default
-                if daily_df is not None and not daily_df.empty and len(daily_df) >= 2:
-                    prev_close = float(daily_df["Close"].iloc[-2])
-
-                chg = price - prev_close
-                pct = (chg / prev_close * 100) if prev_close else 0
-                gap = ((open_p - prev_close) / prev_close * 100) if prev_close else 0
-
-                batch_data[t] = {
-                    "ticker": t, "price": price, "change": chg, "pct": pct,
-                    "open": open_p, "prev_close": prev_close, "gap_pct": gap, "volume": vol,
-                }
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # ── Finnhub per-ticker for any missed (or if Finnhub key available) ────────
-    missing = [t for t in ticker_set if t not in batch_data]
-    if FINNHUB_API_KEY:
-        missing = ticker_set  # Finnhub is more accurate, use it for all
-
-    def _finnhub_quote(t):
-        try:
-            r  = requests.get(
-                f"https://finnhub.io/api/v1/quote?symbol={t}&token={FINNHUB_API_KEY}",
-                timeout=8
-            )
-            js = r.json() if r.content else {}
-            price, prev_close, open_p = js.get("c"), js.get("pc"), js.get("o")
-            if price not in (None, 0):
-                chg = price - prev_close if prev_close else None
-                pct = (chg / prev_close * 100) if prev_close else None
-                gap = ((open_p - prev_close) / prev_close * 100) if (open_p and prev_close) else None
-                return {"ticker": t, "price": price, "change": chg, "pct": pct,
-                        "open": open_p, "prev_close": prev_close, "gap_pct": gap, "volume": None}
-        except Exception:
-            pass
-        return None
-
-    if FINNHUB_API_KEY and missing:
-        fh_results = {}
-        for sym in missing:
-            try:
-                res = _finnhub_quote(sym)
-                if res:
-                    fh_results[sym] = res
-            except Exception:
-                pass
-        batch_data.update(fh_results)
-
-    # Build final rows list in original order
-    for t in ticker_set:
-        if t in batch_data:
-            rows.append(batch_data[t])
-        else:
-            rows.append({"ticker": t, "price": None, "change": None, "pct": None,
-                         "open": None, "prev_close": None, "gap_pct": None, "volume": None})
-    return rows
-
-
-@st.cache_data(ttl=60)
-def fetch_scan_data(tickers_tuple):
-    """
-    Compute scan signals from a single batch yf.download call.
-    Derives vol ratio, VWAP, relative strength, 52W high/low, and momentum
-    without looping individual tickers.
+    Single function that fetches ALL market data in exactly 2 yf.download calls.
+    Returns both quotes and scan signals to avoid duplicate downloads.
     """
     import pandas as pd
-    tickers  = list(tickers_tuple)
-    results  = {}
+    tickers   = list(tickers_tuple)
+    quotes    = []
+    scan      = {}
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # ── 1. Batch download intraday + daily in two requests ────────────────────
+    # ── 1. One intraday batch (1m, 1 day) ────────────────────────────────────
+    intra_all = pd.DataFrame()
     try:
         intra_all = yf.download(
-            tickers, period="1d", interval="1m",
+            tickers, period="1d", interval="5m",   # 5m is faster + smaller than 1m
             group_by="ticker", auto_adjust=True,
-            progress=False, threads=True,
+            progress=False, threads=False,          # threads=False avoids Streamlit restriction
         )
-        daily_all = yf.download(
-            tickers, period="1y", interval="1d",
-            group_by="ticker", auto_adjust=True,
-            progress=False, threads=True,
-        )
-    except Exception:
-        return {}
-
-    # ── 2. Get SPY % change for relative strength ─────────────────────────────
-    spy_pct = 0.0
-    try:
-        def _get_df(all_data, sym):
-            if len(tickers) == 1:
-                return all_data
-            return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
-
-        spy_intra = _get_df(intra_all, "SPY")
-        spy_daily = _get_df(daily_all, "SPY")
-        if not spy_intra.empty and len(spy_daily) >= 2:
-            spy_now  = float(spy_intra["Close"].iloc[-1])
-            spy_prev = float(spy_daily["Close"].iloc[-2])
-            spy_pct  = (spy_now - spy_prev) / spy_prev * 100
     except Exception:
         pass
 
-    # ── 3. Per-ticker signal computation (no HTTP calls — pure DataFrame math) ─
+    # ── 2. One daily batch (3 months — enough for flags + 52W via rolling max) ─
+    daily_all = pd.DataFrame()
+    try:
+        daily_all = yf.download(
+            tickers, period="3mo", interval="1d",
+            group_by="ticker", auto_adjust=True,
+            progress=False, threads=False,
+        )
+    except Exception:
+        pass
+
+    # ── 3. SPY pct for relative strength ─────────────────────────────────────
+    spy_pct = 0.0
+    try:
+        def _get(all_data, sym):
+            if not isinstance(all_data.columns, pd.MultiIndex):
+                return all_data
+            return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
+        spy_i = _get(intra_all, "SPY")
+        spy_d = _get(daily_all, "SPY")
+        if not spy_i.empty and len(spy_d) >= 2:
+            spy_pct = (float(spy_i["Close"].iloc[-1]) - float(spy_d["Close"].iloc[-2])) \
+                      / float(spy_d["Close"].iloc[-2]) * 100
+    except Exception:
+        pass
+
+    # ── 4. Per-ticker compute (pure pandas, no HTTP) ──────────────────────────
     for t in tickers:
         try:
             def _df(all_data, sym):
-                if len(tickers) == 1:
-                    return all_data
-                try:
-                    return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
-                except Exception:
+                if all_data is None or all_data.empty:
                     return pd.DataFrame()
+                if not isinstance(all_data.columns, pd.MultiIndex):
+                    return all_data
+                return all_data[sym] if sym in all_data.columns.get_level_values(0) else pd.DataFrame()
 
             intra = _df(intra_all, t)
             daily = _df(daily_all, t)
 
             if intra is None or intra.empty:
-                results[t] = {"signals": []}
+                quotes.append({"ticker": t, "price": None, "change": None, "pct": None,
+                               "open": None, "prev_close": None, "gap_pct": None, "volume": None})
+                scan[t] = {"signals": []}
                 continue
 
             price     = float(intra["Close"].iloc[-1])
+            open_p    = float(intra["Open"].iloc[0])
             today_vol = int(intra["Volume"].sum()) if "Volume" in intra.columns else 0
 
-            # Avg volume from daily (last 30 days)
-            avg_vol = 0
-            if daily is not None and not daily.empty and "Volume" in daily.columns:
-                avg_vol = int(daily["Volume"].tail(30).mean())
+            # Prev close + gap
+            prev_close = price
+            if daily is not None and not daily.empty and len(daily) >= 2:
+                prev_close = float(daily["Close"].iloc[-2])
+            chg     = price - prev_close
+            pct     = (chg / prev_close * 100) if prev_close else 0
+            gap_pct = ((open_p - prev_close) / prev_close * 100) if prev_close else 0
+
+            quotes.append({"ticker": t, "price": price, "change": chg, "pct": pct,
+                           "open": open_p, "prev_close": prev_close,
+                           "gap_pct": gap_pct, "volume": today_vol})
+
+            # ── Scan signals ─────────────────────────────────────────────────
+            signals = []
+
+            # Volume ratio
+            avg_vol   = int(daily["Volume"].tail(20).mean()) if (daily is not None and not daily.empty and "Volume" in daily.columns) else 0
             vol_ratio = (today_vol / avg_vol) if avg_vol > 0 else None
 
             # VWAP
             above_vwap = None
-            vwap_val   = None
             try:
-                typ      = (intra["High"] + intra["Low"] + intra["Close"]) / 3
-                vwap_ser = (typ * intra["Volume"]).cumsum() / intra["Volume"].cumsum()
-                vwap_val = float(vwap_ser.iloc[-1])
+                typ        = (intra["High"] + intra["Low"] + intra["Close"]) / 3
+                vwap_val   = float((typ * intra["Volume"]).cumsum().iloc[-1] / intra["Volume"].cumsum().iloc[-1])
                 above_vwap = price > vwap_val
             except Exception:
                 pass
 
-            # Daily % change and relative strength
-            stock_pct    = 0.0
-            rel_strength = 0.0
-            if daily is not None and not daily.empty and len(daily) >= 2:
-                prev      = float(daily["Close"].iloc[-2])
-                stock_pct = (price - prev) / prev * 100
-                rel_strength = stock_pct - spy_pct
+            # Relative strength
+            stock_pct    = pct
+            rel_strength = stock_pct - spy_pct
 
-            # 52-week high/low from daily history
+            # 52W using 3-month rolling (approximate — full year needs longer data)
             near_52w_high = False
             at_52w_low    = False
             if daily is not None and not daily.empty and len(daily) >= 20:
-                hi_52 = float(daily["High"].max())
-                lo_52 = float(daily["Low"].min())
-                near_52w_high = price >= hi_52 * 0.97
-                at_52w_low    = price <= lo_52 * 1.03
+                hi = float(daily["High"].max())
+                lo = float(daily["Low"].min())
+                near_52w_high = price >= hi * 0.97
+                at_52w_low    = price <= lo * 1.03
 
-            # ── build signal tags ─────────────────────────────────────────────
-            signals = []
+            # Build tags
             if vol_ratio and vol_ratio >= 2.0:
-                signals.append(("VOL",   f"{vol_ratio:.1f}x avg vol",       "#06b6d4"))
+                signals.append(("VOL",   f"{vol_ratio:.1f}x avg vol",    "#06b6d4"))
             if above_vwap is True:
-                signals.append(("VWAP+", "above VWAP",                      "#22c55e"))
+                signals.append(("VWAP+", "above VWAP",                   "#22c55e"))
             elif above_vwap is False:
-                signals.append(("VWAP-", "below VWAP",                      "#ef4444"))
+                signals.append(("VWAP-", "below VWAP",                   "#ef4444"))
             if rel_strength >= 2.0:
-                signals.append(("RS+",   f"+{rel_strength:.1f}% vs SPY",    "#a78bfa"))
+                signals.append(("RS+",   f"+{rel_strength:.1f}% vs SPY", "#a78bfa"))
             elif rel_strength <= -2.0:
-                signals.append(("RS-",   f"{rel_strength:.1f}% vs SPY",     "#f87171"))
+                signals.append(("RS-",   f"{rel_strength:.1f}% vs SPY",  "#f87171"))
             if near_52w_high:
-                signals.append(("52W↑",  "near 52-week high",               "#fcd34d"))
+                signals.append(("52W↑",  "near 52-week high",            "#fcd34d"))
             if at_52w_low:
-                signals.append(("52W↓",  "near 52-week low",                "#f87171"))
+                signals.append(("52W↓",  "near 52-week low",             "#f87171"))
             if stock_pct >= 3.0 and vol_ratio and vol_ratio >= 1.5:
-                signals.append(("MOM",   "momentum breakout",               "#f59e0b"))
+                signals.append(("MOM",   "momentum breakout",            "#f59e0b"))
 
-            # ── daily bull/bear flag detection ────────────────────────────────
-            # Pole  = strong directional move over 5–15 days
-            # Flag  = tight consolidation in last 5 days (low ATR, small range)
-            # Entry = today breaking above/below flag channel
+            # Daily bull/bear flag (needs 25+ days)
             try:
                 if daily is not None and not daily.empty and len(daily) >= 25:
-                    # Pole: days -25 to -5 (20-day move before recent consolidation)
-                    pole_df    = daily.iloc[-25:-5]
-                    flag_df    = daily.iloc[-5:]   # last 5 days = flag/consolidation
-
-                    pole_start = float(pole_df["Close"].iloc[0])
-                    pole_end   = float(pole_df["Close"].iloc[-1])
-                    pole_pct   = (pole_end - pole_start) / pole_start * 100
-
-                    # Flag tightness: ATR of flag period vs ATR of pole period
-                    pole_atr   = float((pole_df["High"] - pole_df["Low"]).mean())
-                    flag_atr   = float((flag_df["High"]  - flag_df["Low"]).mean())
-                    tight      = pole_atr > 0 and (flag_atr / pole_atr) < 0.5
-
-                    # Flag should be slightly counter-trend (pullback), not a reversal
-                    flag_retrace = (float(flag_df["Close"].iloc[-1]) - float(flag_df["Close"].iloc[0])) / pole_end * 100
-                    mild_pullback = -8 < flag_retrace < 2  # bull: slight dip; bear: slight bounce
-
-                    # Volume: pole had higher vol than flag (institutional accumulation then rest)
-                    pole_vol   = float(pole_df["Volume"].mean()) if "Volume" in pole_df.columns else 0
-                    flag_vol   = float(flag_df["Volume"].mean())  if "Volume" in flag_df.columns else 0
-                    vol_confirms = pole_vol > 0 and flag_vol < pole_vol
-
-                    if pole_pct >= 8.0 and tight and mild_pullback and vol_confirms:
-                        tip = f"daily bull flag — {pole_pct:.1f}% pole, consolidating {abs(flag_retrace):.1f}%"
-                        signals.insert(0, ("BULL🚩", tip, "#22c55e"))
-                    elif pole_pct <= -8.0 and tight and vol_confirms:
-                        tip = f"daily bear flag — {abs(pole_pct):.1f}% pole, consolidating"
-                        signals.insert(0, ("BEAR🚩", tip, "#ef4444"))
+                    pole_df  = daily.iloc[-25:-5]
+                    flag_df  = daily.iloc[-5:]
+                    p_start  = float(pole_df["Close"].iloc[0])
+                    p_end    = float(pole_df["Close"].iloc[-1])
+                    pole_pct_val = (p_end - p_start) / p_start * 100
+                    pole_atr = float((pole_df["High"] - pole_df["Low"]).mean())
+                    flag_atr = float((flag_df["High"]  - flag_df["Low"]).mean())
+                    tight    = pole_atr > 0 and (flag_atr / pole_atr) < 0.5
+                    retrace  = (float(flag_df["Close"].iloc[-1]) - float(flag_df["Close"].iloc[0])) / p_end * 100
+                    p_vol    = float(pole_df["Volume"].mean()) if "Volume" in pole_df.columns else 1
+                    f_vol    = float(flag_df["Volume"].mean()) if "Volume" in flag_df.columns else 1
+                    vol_ok   = p_vol > 0 and f_vol < p_vol
+                    if pole_pct_val >= 8.0 and tight and -8 < retrace < 2 and vol_ok:
+                        signals.insert(0, ("BULL🚩", f"daily bull flag — {pole_pct_val:.1f}% pole", "#22c55e"))
+                    elif pole_pct_val <= -8.0 and tight and vol_ok:
+                        signals.insert(0, ("BEAR🚩", f"daily bear flag — {abs(pole_pct_val):.1f}% pole", "#ef4444"))
             except Exception:
                 pass
 
-            results[t] = {
-                "vol_ratio":     vol_ratio,
-                "rel_strength":  rel_strength,
-                "near_52w_high": near_52w_high,
-                "above_vwap":    above_vwap,
-                "vwap_val":      vwap_val,
-                "signals":       signals,
-                "stock_pct":     stock_pct,
-            }
+            scan[t] = {"signals": signals, "vol_ratio": vol_ratio,
+                       "rel_strength": rel_strength, "above_vwap": above_vwap,
+                       "near_52w_high": near_52w_high, "stock_pct": stock_pct}
         except Exception:
-            results[t] = {"signals": []}
+            quotes.append({"ticker": t, "price": None, "change": None, "pct": None,
+                           "open": None, "prev_close": None, "gap_pct": None, "volume": None})
+            scan[t] = {"signals": []}
 
-    return results
+    return {"quotes": quotes, "scan": scan}
+
+
+# Keep these as thin wrappers so existing call sites work unchanged
+@st.cache_data(ttl=30)
+def fetch_quotes(tickers: tuple):
+    return fetch_market_data(tickers).get("quotes", [])
+
+@st.cache_data(ttl=60)
+def fetch_scan_data(tickers_tuple):
+    return fetch_market_data(tickers_tuple).get("scan", {})
 
 
 @st.cache_data(ttl=300)
@@ -797,75 +676,48 @@ def fetch_ticker_news(ticker):
 
 @st.cache_data(ttl=300)
 def fetch_universe():
-    syms = []
+    syms  = []
     block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT",
              "WITH","ALL","NEW","INC","LLC","LTD","PLC","EST","EDT","AM","PM","IPO"}
 
-    # ── 1. Finviz screener — most active + top gainers + top losers ───────────
-    finviz_urls = [
-        # Most active by volume
-        "https://finviz.com/screener.ashx?v=111&s=ta_topvolume&o=-volume",
-        # Top gainers today
-        "https://finviz.com/screener.ashx?v=111&s=ta_topgainers",
-        # Top losers today
-        "https://finviz.com/screener.ashx?v=111&s=ta_toplosers",
-        # High relative volume
-        "https://finviz.com/screener.ashx?v=111&f=sh_relvol_o2&o=-volume",
-        # Near 52-week highs
-        "https://finviz.com/screener.ashx?v=111&f=ta_highlow52w_nh",
-    ]
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://finviz.com/",
-    }
-    for url in finviz_urls:
-        try:
-            r = requests.get(url, headers=headers, timeout=15)
-            if r.status_code == 200:
-                # Finviz ticker cells have class="screener-link-primary"
-                found = re.findall(r'class="screener-link-primary">([A-Z]{1,5})<', r.text)
-                if not found:
-                    # fallback pattern
-                    found = re.findall(r'"ticker":"([A-Z]{1,5})"', r.text)
-                for s in found:
-                    if s not in syms and s not in block:
-                        syms.append(s)
-        except Exception:
-            pass
-
-    # ── 2. Yahoo Finance most active + gainers + losers ───────────────────────
-    yahoo_urls = [
-        "https://finance.yahoo.com/markets/stocks/most-active/",
-        "https://finance.yahoo.com/markets/stocks/gainers/",
-        "https://finance.yahoo.com/markets/stocks/losers/",
-        "https://finance.yahoo.com/markets/stocks/52-week-highs/",
-    ]
-    for url in yahoo_urls:
-        try:
-            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            found = re.findall(r'"symbol":"([A-Z]{1,5})"', r.text)
+    # ── Single fast Finviz most-active scrape ─────────────────────────────────
+    try:
+        r = requests.get(
+            "https://finviz.com/screener.ashx?v=111&s=ta_topvolume&o=-volume",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finviz.com/"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            found = re.findall(r'class="screener-link-primary">([A-Z]{1,5})<', r.text)
             for s in found:
+                if s not in syms and s not in block:
+                    syms.append(s)
+    except Exception:
+        pass
+
+    # ── Yahoo Finance most active (single call) ───────────────────────────────
+    if len(syms) < 20:
+        try:
+            r = requests.get(
+                "https://finance.yahoo.com/markets/stocks/most-active/",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
+            )
+            for s in re.findall(r'"symbol":"([A-Z]{1,5})"', r.text):
                 if s not in syms and s not in block:
                     syms.append(s)
         except Exception:
             pass
 
-    # ── 3. Hardcoded core watchlist always included ───────────────────────────
-    core = [
-        "SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
-        "GOOG","JPM","V","XOM","MA","JNJ","PG","BAC","WMT","DIS","NFLX","INTC",
-        "PYPL","COIN","PLTR","SOFI","MARA","RIOT","GME","AMC","SMCI","ARM","SNOW",
-        "UBER","LYFT","SNAP","SHOP","RBLX","SPOT","MU","QCOM","AVGO","CRM","ORCL",
-    ]
+    # ── Core watchlist always included ───────────────────────────────────────
+    core = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
+            "JPM","V","XOM","MA","BAC","WMT","UNH","GS","NFLX","COIN",
+            "PLTR","SOFI","MARA","GME","SMCI","ARM","MU","AVGO","UBER","SNAP"]
     for s in core:
         if s not in syms:
             syms.append(s)
 
-    # Deduplicate, remove junk, cap at 300
     clean_syms = [s for s in dict.fromkeys(syms) if 1 < len(s) <= 5 and s not in block]
-    return clean_syms[:300]
+    return clean_syms[:60]   # hard cap at 60 — keeps downloads fast
 
 
 @st.cache_data(ttl=180)
@@ -2233,7 +2085,7 @@ def live_dashboard():
         _cached_earnings = []
 
     fetch_jobs = {
-        "quotes":   (fetch_quotes,            (tuple(tickers),)),
+        "market":   (fetch_market_data,       (tuple(tickers),)),
         "news":     (fetch_news,              ()),
         "index":    (fetch_index_bar,         ()),
         "earnings": (fetch_earnings_calendar, ()),
@@ -2241,7 +2093,6 @@ def live_dashboard():
         "flow":     (fetch_options_flow,      ()),
         "vol":      (fetch_volume_spikes,     (tuple(tickers),)),
         "expmove":  (fetch_expected_moves,    (_upcoming_syms,)),
-        "scan":     (fetch_scan_data,         (tuple(tickers),)),
     }
 
     results = {}
@@ -2249,9 +2100,12 @@ def live_dashboard():
         try:
             results[key] = fn(*args)
         except Exception:
-            results[key] = {} if key in ("scan", "expmove") else []
+            results[key] = {} if key in ("market","expmove") else []
 
-    quotes       = results.get("quotes",   [])
+    market_data  = results.get("market",   {})
+    quotes       = market_data.get("quotes", [])
+    scan_data    = market_data.get("scan",   {})
+
     news         = results.get("news",     [])
     index_data   = results.get("index",    [])
     earnings_cal = results.get("earnings", _cached_earnings) or []
@@ -2259,7 +2113,6 @@ def live_dashboard():
     flow_items   = results.get("flow",     [])
     vol_spikes   = results.get("vol",      [])
     expected_moves = results.get("expmove",{})
-    scan_data    = results.get("scan",     {})
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
