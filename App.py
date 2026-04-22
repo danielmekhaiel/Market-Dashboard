@@ -914,7 +914,6 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
     page  = min(st.session_state[page_key], max(1, (len(rows) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE))
     start = (page - 1) * ROWS_PER_PAGE
 
-    # ── filter by signal if selected ─────────────────────────────────────────
     sig_options = ["All", "VOL 2x+", "VWAP+", "RS+ vs SPY", "Near 52W High", "Momentum", "Bull Flag", "Bear Flag"]
     sig_filter  = st.selectbox("Signal filter", sig_options,
                                key=f"{page_key}_sig", label_visibility="collapsed")
@@ -931,8 +930,8 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
         if sig_filter == "Bear Flag":      return "BEAR🚩" in sigs
         return True
 
-    filtered   = [q for q in rows if _matches(q)]
-    page_rows  = filtered[start: start + ROWS_PER_PAGE]
+    filtered  = [q for q in rows if _matches(q)]
+    page_rows = filtered[start: start + ROWS_PER_PAGE]
 
     panel_cls = "sc-panel-bull" if is_bull else "sc-panel-bear"
     cnt_cls   = "sc-count-bull" if is_bull else "sc-count-bear"
@@ -946,51 +945,61 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
     if not page_rows:
         st.markdown('<div class="sc-empty">NO RESULTS</div>', unsafe_allow_html=True)
     else:
-        st.markdown("""<table class="sc-table"><thead>
-<tr><th>SYMBOL</th><th class="r">PRICE</th><th class="r">CHG %</th><th class="r">VOL</th><th>SIGNALS</th></tr>
-</thead></table>""", unsafe_allow_html=True)
+        # Header
+        st.markdown("""<div style="display:grid;grid-template-columns:90px 70px 65px 65px 1fr;
+gap:0;padding:6px 12px;background:rgba(0,0,0,.3);border-bottom:1px solid rgba(255,255,255,.05)">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase">SYMBOL</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">PRICE</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">CHG%</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">VOL</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;padding-left:8px">SIGNALS</span>
+</div>""", unsafe_allow_html=True)
 
+        rows_html = ""
         for q in page_rows:
             sym  = clean(q["ticker"])
-            pct  = q["pct"]
-            cc   = "c-pos" if (pct or 0) >= 0 else "c-neg"
+            pct  = q["pct"] or 0
+            pct_color = "#4ade80" if pct >= 0 else "#f87171"
             sd   = scan_data.get(sym, {})
             sigs = sd.get("signals", [])
 
-            # Build signal badge HTML
             badge_html = ""
             for tag, tip, color in sigs[:4]:
                 badge_html += (
-                    f'<span title="{tip}" style="font-family:\'DM Sans\',sans-serif;'
-                    f'font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;'
-                    f'margin-right:4px;display:inline-block;margin-bottom:2px;'
-                    f'background:{color}22;color:{color};'
-                    f'border:1px solid {color}55;">{tag}</span>'
+                    f'<span title="{tip}" style="font-family:\'IBM Plex Mono\',monospace;'
+                    f'font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;'
+                    f'margin-right:3px;background:{color}20;color:{color};'
+                    f'border:1px solid {color}50;">{tag}</span>'
                 )
 
-            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 3])
-            with col1:
-                if st.button(f"{'🟢' if is_bull else '🔴'} {sym}",
-                             key=f"btn_{page_key}_{sym}", use_container_width=True):
-                    if st.session_state.get("selected_ticker") == sym:
-                        st.session_state["selected_ticker"] = None
-                        st.session_state["selected_quote"]  = None
-                    else:
-                        st.session_state["selected_ticker"] = sym
-                        st.session_state["selected_quote"]  = q
-                    st.rerun()
-            with col2:
-                st.markdown(f'<div class="c-price" style="padding-top:6px">{fmt_price(q["price"])}</div>',
-                            unsafe_allow_html=True)
-            with col3:
-                st.markdown(f'<div class="{cc}" style="padding-top:6px">{fmt_pct(pct)}</div>',
-                            unsafe_allow_html=True)
-            with col4:
-                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>',
-                            unsafe_allow_html=True)
-            with col5:
-                st.markdown(f'<div style="padding-top:5px;line-height:1.8">{badge_html}</div>',
-                            unsafe_allow_html=True)
+            rows_html += f"""<div class="scan-row" onclick="window.scanClick='{sym}'"
+  style="display:grid;grid-template-columns:90px 70px 65px 65px 1fr;
+  gap:0;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.04);
+  align-items:center;cursor:pointer;transition:background .15s"
+  onmouseover="this.style.background='rgba(99,102,241,.07)'"
+  onmouseout="this.style.background='transparent'">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#ffffff">{'🟢' if pct>=0 else '🔴'} {sym}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#e2e4e9;text-align:right">${fmt_price(q['price'])}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:{pct_color};text-align:right">{fmt_pct(pct)}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b7280;text-align:right">{fmt_vol(q.get('volume'))}</span>
+  <span style="padding-left:8px">{badge_html}</span>
+</div>"""
+
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+        # Hidden buttons for Streamlit click state — visually hidden via CSS
+        st.markdown('<div style="height:0;overflow:hidden;position:absolute;pointer-events:none">', unsafe_allow_html=True)
+        for q in page_rows:
+            sym = clean(q["ticker"])
+            if st.button(sym, key=f"btn_{page_key}_{sym}"):
+                if st.session_state.get("selected_ticker") == sym:
+                    st.session_state["selected_ticker"] = None
+                    st.session_state["selected_quote"]  = None
+                else:
+                    st.session_state["selected_ticker"] = sym
+                    st.session_state["selected_quote"]  = q
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown(
             f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
@@ -2010,7 +2019,7 @@ def render_calendar(earnings, econ, expected_moves=None):
     padding:1px 6px; border-radius:3px; letter-spacing:.5px;
 }
 .earn-card-body {
-    display:grid; grid-template-columns:1fr 1fr 1fr;
+    display:grid; grid-template-columns:100px 120px 90px;
     gap:0;
 }
 .earn-card-cell {
@@ -2021,11 +2030,11 @@ def render_calendar(earnings, econ, expected_moves=None):
 .earn-card-lbl {
     font-size:9px; font-weight:600; color:#4a4e62;
     text-transform:uppercase; letter-spacing:1px;
-    margin-bottom:1px;
+    margin-bottom:2px;
 }
 .earn-card-val {
     font-family:'IBM Plex Mono',monospace;
-    font-size:12px; font-weight:700; color:#ffffff;
+    font-size:14px; font-weight:700; color:#ffffff; line-height:1.2;
 }
 .earn-bmo { color:#00c4b4; }
 .earn-amc { color:#f59e0b; }
