@@ -1981,157 +1981,116 @@ def render_calendar(earnings, econ, expected_moves=None):
         upcoming = [e for e in earnings if e.get("date","") >= today_str and e.get("sym")][:5]
         if upcoming:
             st.markdown("""<style>
-.earn-cards { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+.earn-cards { display:flex; flex-direction:column; gap:6px; padding:8px 10px; }
 .earn-card {
-    background: #111318;
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 10px;
-    overflow: hidden;
+    background:#13161e;
+    border:1px solid rgba(255,255,255,.07);
+    border-radius:6px;
+    overflow:hidden;
+    font-family:'DM Sans',sans-serif;
 }
-.earn-card-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px 8px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
-    background: rgba(255,255,255,.02);
+.earn-card-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:6px 10px;
+    background:#0e1017;
+    border-bottom:1px solid rgba(255,255,255,.06);
 }
 .earn-card-sym {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 16px; font-weight: 700; color: #f0f1f5;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px; font-weight:700; color:#ffffff; letter-spacing:.5px;
 }
-.earn-card-date {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px; color: #6b7280;
+.earn-card-date-pill {
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9px; color:#6b7280; letter-spacing:.5px;
 }
-.earn-card-today-badge {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; font-weight: 700;
-    background: rgba(99,102,241,.2); color: #a5b4fc;
-    border: 1px solid rgba(99,102,241,.4);
-    padding: 2px 8px; border-radius: 999px;
+.earn-card-today-pill {
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9px; font-weight:700; color:#00c4b4;
+    background:rgba(0,196,180,.1); border:1px solid rgba(0,196,180,.3);
+    padding:1px 6px; border-radius:3px; letter-spacing:.5px;
 }
 .earn-card-body {
-    display: grid; grid-template-columns: 1fr 1fr 1fr;
-    gap: 0;
+    display:grid; grid-template-columns:1fr 1fr 1fr;
+    gap:0;
 }
-.earn-card-stat {
-    padding: 10px 14px;
-    border-right: 1px solid rgba(255,255,255,.05);
-    display: flex; flex-direction: column; gap: 3px;
+.earn-card-cell {
+    padding:5px 10px;
+    border-right:1px solid rgba(255,255,255,.05);
 }
-.earn-card-stat:last-child { border-right: none; }
-.earn-card-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 9px; font-weight: 700;
-    letter-spacing: 1.2px; color: #4a4e62;
-    text-transform: uppercase;
+.earn-card-cell:last-child { border-right:none; }
+.earn-card-lbl {
+    font-size:9px; font-weight:600; color:#4a4e62;
+    text-transform:uppercase; letter-spacing:1px;
+    margin-bottom:1px;
 }
-.earn-card-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 14px; font-weight: 700; color: #e2e4e9;
+.earn-card-val {
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px; font-weight:700; color:#ffffff;
 }
-.earn-card-sub {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; color: #4a4e62;
-}
-.earn-timing-bmo {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px; font-weight: 700;
-    background: rgba(34,197,94,.12); color: #4ade80;
-    border: 1px solid rgba(34,197,94,.25);
-    padding: 3px 10px; border-radius: 5px;
-    display: inline-block;
-}
-.earn-timing-amc {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px; font-weight: 700;
-    background: rgba(245,158,11,.12); color: #fcd34d;
-    border: 1px solid rgba(245,158,11,.25);
-    padding: 3px 10px; border-radius: 5px;
-    display: inline-block;
-}
-.earn-timing-unk {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px; font-weight: 700;
-    background: rgba(255,255,255,.05); color: #6b7280;
-    border: 1px solid rgba(255,255,255,.1);
-    padding: 3px 10px; border-radius: 5px;
-    display: inline-block;
-}
+.earn-bmo { color:#00c4b4; }
+.earn-amc { color:#f59e0b; }
+.earn-move-hi { color:#f87171; }
+.earn-move-md { color:#fcd34d; }
+.earn-move-lo { color:#9ca3af; }
 </style>""", unsafe_allow_html=True)
 
             cards_html = '<div class="earn-cards">'
             for e in upcoming:
-                d         = e["date"]
-                sym       = e["sym"]
-                is_today  = d == today_str
-                date_disp = "TODAY" if is_today else datetime.strptime(d, "%Y-%m-%d").strftime("%b %d, %Y")
-                timing    = e.get("timing", "—")
+                d      = e["date"]
+                sym    = e["sym"]
+                timing = e.get("timing","—")
+                eps    = e.get("eps_est","—")
+                is_today = d == today_str
 
-                # Timing badge
+                date_disp = "TODAY" if is_today \
+                    else datetime.strptime(d, "%Y-%m-%d").strftime("%b %d")
+                date_html = '<span class="earn-card-today-pill">TODAY</span>' if is_today \
+                    else f'<span class="earn-card-date-pill">{date_disp}</span>'
+
                 if timing == "BMO":
-                    timing_html = '<span class="earn-timing-bmo">▲ BMO</span>'
-                    timing_sub  = "Before Market Open"
+                    tim_html = '<span class="earn-bmo">▲ BMO</span>'
                 elif timing == "AMC":
-                    timing_html = '<span class="earn-timing-amc">▼ AMC</span>'
-                    timing_sub  = "After Market Close"
+                    tim_html = '<span class="earn-amc">▼ AMC</span>'
                 else:
-                    timing_html = '<span class="earn-timing-unk">— TBD</span>'
-                    timing_sub  = "Timing unknown"
+                    tim_html = '<span style="color:#4a4e62">— TBD</span>'
 
-                # Date badge
-                date_badge = f'<span class="earn-card-today-badge">TODAY</span>' if is_today \
-                             else f'<span class="earn-card-date">{date_disp}</span>'
-
-                # EPS
-                eps = e.get("eps_est", "—")
-
-                # Expected move
                 em = expected_moves.get(sym)
                 if em:
-                    mv_pct   = em["move_pct"]
-                    mv_dol   = em["move_dollar"]
-                    mv_color = "#f87171" if mv_pct >= 10 else ("#fcd34d" if mv_pct >= 5 else "#9ca3af")
-                    em_val   = f'<span style="color:{mv_color}">±{mv_pct:.1f}%</span>'
-                    em_sub   = f'±${mv_dol:.2f} per share'
+                    mp = em["move_pct"]
+                    md = em["move_dollar"]
+                    mc = "earn-move-hi" if mp>=10 else ("earn-move-md" if mp>=5 else "earn-move-lo")
+                    em_html = f'<span class="{mc}">±{mp:.1f}%</span>'
+                    em_sub  = f'<span style="font-size:9px;color:#4a4e62"> ±${md:.2f}</span>'
                 else:
-                    em_val = "—"
-                    em_sub = "No options data"
+                    em_html = '<span style="color:#4a4e62">—</span>'
+                    em_sub  = ''
 
-                # Border color by timing
-                border_color = "#22c55e" if timing == "BMO" else ("#f59e0b" if timing == "AMC" else "#6366f1")
+                border = "#00c4b4" if timing=="BMO" else ("#f59e0b" if timing=="AMC" else "#6366f1")
 
-                cards_html += f"""<div class="earn-card" style="border-left: 3px solid {border_color}">
-  <div class="earn-card-header">
-    <div style="display:flex;align-items:center;gap:10px">
-      <span class="earn-card-sym">{sym}</span>
-      {date_badge}
+                cards_html += f"""<div class="earn-card" style="border-left:2px solid {border}">
+  <div class="earn-card-head">
+    <div style="display:flex;align-items:center;gap:7px">
+      <span class="earn-card-sym">{sym}</span>{date_html}
     </div>
-    {timing_html}
+    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700">{tim_html}</span>
   </div>
   <div class="earn-card-body">
-    <div class="earn-card-stat">
-      <span class="earn-card-label">EPS Estimate</span>
-      <span class="earn-card-value">{eps}</span>
-      <span class="earn-card-sub">Analyst consensus</span>
+    <div class="earn-card-cell">
+      <div class="earn-card-lbl">EPS Est</div>
+      <div class="earn-card-val">{eps}</div>
     </div>
-    <div class="earn-card-stat">
-      <span class="earn-card-label">Expected Move</span>
-      <span class="earn-card-value">{em_val}</span>
-      <span class="earn-card-sub">{em_sub}</span>
+    <div class="earn-card-cell">
+      <div class="earn-card-lbl">Exp Move</div>
+      <div class="earn-card-val">{em_html}{em_sub}</div>
     </div>
-    <div class="earn-card-stat">
-      <span class="earn-card-label">Timing</span>
-      <span class="earn-card-value" style="font-size:12px">{timing_html}</span>
-      <span class="earn-card-sub">{timing_sub}</span>
+    <div class="earn-card-cell">
+      <div class="earn-card-lbl">Timing</div>
+      <div class="earn-card-val" style="font-size:11px">{tim_html}</div>
     </div>
   </div>
 </div>"""
             cards_html += '</div>'
             st.markdown(cards_html, unsafe_allow_html=True)
-            st.markdown("""<div style="padding:6px 14px 10px;font-family:'DM Sans',sans-serif;
-font-size:11px;color:#4a4e62;letter-spacing:.3px">
-⚡ Expected Move = ATM straddle on nearest expiry — what options price in for the earnings day swing
-</div>""", unsafe_allow_html=True)
 
 
 # ── market index summary bar ──────────────────────────────────────────────────
