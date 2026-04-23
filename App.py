@@ -1825,331 +1825,130 @@ def fetch_expected_moves(syms):
 def render_calendar(earnings, econ, expected_moves=None):
     if expected_moves is None:
         expected_moves = {}
-    import calendar as cal_lib
-    today      = datetime.now().date()
-    today_str  = str(today)
-
-    # ── session state ─────────────────────────────────────────────────────────
-    if "cal_tab"   not in st.session_state: st.session_state["cal_tab"]   = "earnings"
-    if "cal_month" not in st.session_state: st.session_state["cal_month"] = today.month
-    if "cal_year"  not in st.session_state: st.session_state["cal_year"]  = today.year
-
-    month = st.session_state["cal_month"]
-    year  = st.session_state["cal_year"]
+    today     = datetime.now().date()
+    today_str = str(today)
 
     earn_count = len(earnings)
-    econ_high  = len([e for e in econ if e["impact"] == "HIGH"])
+    econ_high  = len([e for e in econ if e.get("impact") == "HIGH"])
 
-    # ── panel header ──────────────────────────────────────────────────────────
+    if "cal_tab" not in st.session_state:
+        st.session_state["cal_tab"] = "earnings"
+
     st.markdown(f"""<div class="sc-panel sc-panel-cal">
   <div class="sc-panel-head">
-    <span class="sc-panel-title">Earnings &amp; Economics Calendar</span>
-    <span class="sc-count sc-count-cal">{earn_count} earnings · {econ_high} high-impact econ</span>
+    <span class="sc-panel-title">Earnings &amp; Economics</span>
+    <span class="sc-count sc-count-cal">{earn_count} earnings · {econ_high} high-impact</span>
   </div>""", unsafe_allow_html=True)
 
-    # ── tab + month nav row ───────────────────────────────────────────────────
-    c_earn, c_econ, c_sp, c_prev, c_month, c_next = st.columns([2, 2, 3, 1, 3, 1])
-    with c_earn:
-        if st.button("📅 Earnings",  key="tab_earn", use_container_width=True):
+    c1, c2, c3 = st.columns([2, 2, 8])
+    with c1:
+        if st.button("📅 Earnings", key="tab_earn", use_container_width=True):
             st.session_state["cal_tab"] = "earnings"; st.rerun()
-    with c_econ:
+    with c2:
         if st.button("🏦 Economics", key="tab_econ", use_container_width=True):
             st.session_state["cal_tab"] = "econ"; st.rerun()
-    with c_prev:
-        if st.button("‹", key="cal_prev", use_container_width=True):
-            m, y = month - 1, year
-            if m < 1: m, y = 12, y - 1
-            st.session_state["cal_month"] = m
-            st.session_state["cal_year"]  = y
-            st.rerun()
-    with c_month:
-        st.markdown(f'<div style="text-align:center;font-family:\'IBM Plex Mono\',monospace;'
-                    f'font-size:13px;font-weight:700;color:#e8eaf0;padding-top:6px">'
-                    f'{cal_lib.month_name[month]} {year}</div>', unsafe_allow_html=True)
-    with c_next:
-        if st.button("›", key="cal_next", use_container_width=True):
-            m, y = month + 1, year
-            if m > 12: m, y = 1, y + 1
-            st.session_state["cal_month"] = m
-            st.session_state["cal_year"]  = y
-            st.rerun()
 
     tab = st.session_state["cal_tab"]
 
-    # ── build lookup: date_str -> list of items ───────────────────────────────
     if tab == "earnings":
-        events_by_date = {}
-        for e in earnings:
-            events_by_date.setdefault(e["date"], []).append(e)
-    else:
-        events_by_date = {}
-        for e in econ:
-            events_by_date.setdefault(e["date"], []).append(e)
-
-    # ── calendar grid CSS ─────────────────────────────────────────────────────
-    st.markdown("""<style>
-.mcal-wrap { padding: 8px 12px 12px; }
-.mcal-dow  {
-    display: grid; grid-template-columns: repeat(7, 1fr);
-    gap: 3px; margin-bottom: 3px;
-}
-.mcal-dow span {
-    text-align: center; font-family: 'IBM Plex Mono', monospace;
-    font-size: 9px; font-weight: 700; letter-spacing: 1px;
-    color: #3d4158; text-transform: uppercase; padding: 4px 0;
-}
-.mcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
-.mcal-cell {
-    min-height: 90px; background: rgba(255,255,255,.02);
-    border: 1px solid rgba(255,255,255,.04); border-radius: 6px;
-    padding: 5px 5px 4px; position: relative; overflow: hidden;
-    transition: background .15s;
-}
-.mcal-cell:hover { background: rgba(99,102,241,.06); }
-.mcal-cell.today {
-    border-color: rgba(99,102,241,.4);
-    background: rgba(99,102,241,.07);
-}
-.mcal-cell.other-month { opacity: .3; }
-.mcal-cell.weekend { background: rgba(0,0,0,.15); }
-.mcal-day {
-    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
-    font-weight: 700; color: #4a4e62; margin-bottom: 3px; display: block;
-}
-.mcal-cell.today .mcal-day {
-    color: #fff; background: #6366f1; border-radius: 50%;
-    width: 18px; height: 18px; display: inline-flex;
-    align-items: center; justify-content: center; font-size: 9px;
-}
-.mcal-earn {
-    display: block; font-family: 'IBM Plex Mono', monospace;
-    font-size: 9px; font-weight: 700; padding: 1px 4px;
-    border-radius: 3px; margin-bottom: 2px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; cursor: default;
-}
-.mcal-earn.bmo { background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
-.mcal-earn.amc { background: rgba(245,158,11,.12); color: #fcd34d; border: 1px solid rgba(245,158,11,.2); }
-.mcal-earn.unk { background: rgba(255,255,255,.06); color: #9ca3af; border: 1px solid rgba(255,255,255,.1); }
-.mcal-econ {
-    display: block; font-size: 9px; padding: 1px 4px;
-    border-radius: 3px; margin-bottom: 2px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-}
-.mcal-econ.high { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
-.mcal-econ.med  { background: rgba(245,158,11,.1); color: #fcd34d; border: 1px solid rgba(245,158,11,.18); }
-.mcal-econ.low  { background: rgba(255,255,255,.04); color: #6b7280; border: 1px solid rgba(255,255,255,.08); }
-.mcal-more { font-size: 8px; color: #4a4e62; font-family: 'IBM Plex Mono', monospace; padding-left: 2px; }
-.mcal-legend { display: flex; gap: 14px; padding: 8px 12px 4px; border-top: 1px solid rgba(255,255,255,.04); flex-wrap: wrap; }
-.mcal-leg-item { display: flex; align-items: center; gap: 5px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #4a4e62; letter-spacing: .5px; }
-.mcal-leg-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
-</style>""", unsafe_allow_html=True)
-
-    # ── build calendar grid ───────────────────────────────────────────────────
-    first_weekday, days_in_month = cal_lib.monthrange(year, month)
-    # first_weekday: 0=Mon ... 6=Sun, convert to Sun-first
-    start_offset = (first_weekday + 1) % 7
-
-    # Previous month overflow days
-    if month == 1: prev_year, prev_month = year - 1, 12
-    else:          prev_year, prev_month = year, month - 1
-    _, prev_days_in_month = cal_lib.monthrange(prev_year, prev_month)
-
-    cells = []
-    # Leading empty cells from prev month
-    for i in range(start_offset):
-        d = prev_days_in_month - start_offset + 1 + i
-        cells.append({"day": d, "month": prev_month, "year": prev_year, "other": True})
-    # This month
-    for d in range(1, days_in_month + 1):
-        cells.append({"day": d, "month": month, "year": year, "other": False})
-    # Trailing cells from next month
-    remainder = (7 - len(cells) % 7) % 7
-    for d in range(1, remainder + 1):
-        nm = month + 1 if month < 12 else 1
-        ny = year if month < 12 else year + 1
-        cells.append({"day": d, "month": nm, "year": ny, "other": True})
-
-    # ── render grid HTML ──────────────────────────────────────────────────────
-    days_html = ""
-    for cell in cells:
-        date_str   = f"{cell['year']:04d}-{cell['month']:02d}-{cell['day']:02d}"
-        is_today   = date_str == today_str
-        is_weekend = datetime.strptime(date_str, "%Y-%m-%d").weekday() >= 5
-        cell_cls   = "mcal-cell"
-        if is_today:        cell_cls += " today"
-        if cell["other"]:   cell_cls += " other-month"
-        if is_weekend:      cell_cls += " weekend"
-
-        day_label = f'<span class="mcal-day">{cell["day"]}</span>'
-
-        evs = events_by_date.get(date_str, [])
-        ev_html = ""
-        max_show = 3
-        for ev in evs[:max_show]:
-            if tab == "earnings":
-                t = ev.get("timing","—")
-                cls = "bmo" if t == "BMO" else ("amc" if t == "AMC" else "unk")
-                label = ev["sym"]
-                eps = ev.get("eps_est","")
-                em  = expected_moves.get(label)
-                em_str = f" ±{em['move_pct']:.1f}%" if em else ""
-                tip = f'{label} | EPS est: {eps}{em_str}'.strip()
-                ev_html += f'<span class="mcal-earn {cls}" title="{tip}">{label}{em_str}</span>'
-            else:
-                imp = ev.get("impact","LOW").lower()
-                name = ev.get("event","")[:22]
-                ev_title = ev.get("event","")
-                ev_html += f'<span class="mcal-econ {imp}" title="{ev_title}">{name}</span>'
-        if len(evs) > max_show:
-            ev_html += f'<span class="mcal-more">+{len(evs)-max_show} more</span>'
-
-        days_html += f'<div class="{cell_cls}">{day_label}{ev_html}</div>'
-
-    # Legend
-    if tab == "earnings":
-        legend = """
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(34,197,94,.3)"></span>BMO — Before Market Open</span>
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(245,158,11,.3)"></span>AMC — After Market Close</span>
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(255,255,255,.1)"></span>Unknown timing</span>"""
-    else:
-        ff_src = econ[0].get("source","") if econ else ""
-        ff_badge = ('&nbsp;·&nbsp;<a href="https://www.forexfactory.com/calendar" target="_blank" '
-                    'style="color:#f59e0b;text-decoration:none;font-weight:700">🏭 Forex Factory ↗</a>'
-                    if ff_src == "forexfactory" else "")
-        legend = f"""
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(239,68,68,.4)"></span>HIGH impact</span>
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(245,158,11,.4)"></span>MED impact</span>
-  <span class="mcal-leg-item"><span class="mcal-leg-dot" style="background:rgba(255,255,255,.15)"></span>LOW impact</span>
-  <span class="mcal-leg-item" style="margin-left:auto">{ff_badge}</span>"""
-
-    st.markdown(f"""<div class="mcal-wrap">
-  <div class="mcal-dow">
-    <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
-  </div>
-  <div class="mcal-grid">{days_html}</div>
-</div>
-<div class="mcal-legend">{legend}</div>
-</div>""", unsafe_allow_html=True)
-
-    # ── selected day detail (earnings only) ───────────────────────────────────
-    if tab == "earnings" and earnings:
-        today_earns = events_by_date.get(today_str, [])
-        upcoming = [e for e in earnings if e.get("date","") >= today_str and e.get("sym")][:5]
-        if upcoming:
+        upcoming = [e for e in earnings if e.get("sym") and e.get("date","") >= today_str][:20]
+        if not upcoming:
+            st.markdown('<div class="sc-empty">No upcoming earnings found</div>', unsafe_allow_html=True)
+        else:
             st.markdown("""<style>
-.earn-cards { display:flex; flex-direction:column; gap:5px; padding:8px 10px; }
-.earn-card {
-    background:#13161e;
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:6px;
-    overflow:hidden;
-    font-family:'DM Sans',sans-serif;
-    max-width:400px;
-}
-.earn-card-head {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:5px 10px;
-    background:#0e1017;
-    border-bottom:1px solid rgba(255,255,255,.07);
-}
-.earn-card-sym {
-    font-family:'IBM Plex Mono',monospace;
-    font-size:14px; font-weight:700; color:#ffffff; letter-spacing:.5px;
-}
-.earn-card-date-pill {
-    font-family:'IBM Plex Mono',monospace;
-    font-size:9px; color:#6b7280; letter-spacing:.3px;
-}
-.earn-card-today-pill {
-    font-family:'IBM Plex Mono',monospace;
-    font-size:9px; font-weight:700; color:#00c4b4;
-    background:rgba(0,196,180,.1); border:1px solid rgba(0,196,180,.3);
-    padding:1px 5px; border-radius:3px; letter-spacing:.3px;
-}
-.earn-card-body {
-    display:grid; grid-template-columns:90px 110px 80px;
-    gap:0;
-}
-.earn-card-cell {
-    padding:5px 8px;
-    border-right:1px solid rgba(255,255,255,.05);
-}
-.earn-card-cell:last-child { border-right:none; }
-.earn-card-lbl {
-    font-size:8px; font-weight:700; color:#4a4e62;
-    text-transform:uppercase; letter-spacing:1px;
-    margin-bottom:2px;
-}
-.earn-card-val {
-    font-family:'IBM Plex Mono',monospace;
-    font-size:13px; font-weight:700; color:#ffffff; line-height:1.2;
-}
-.earn-bmo { color:#00c4b4; font-size:11px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
-.earn-amc { color:#f59e0b; font-size:11px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
-.earn-move-hi { color:#f87171; }
-.earn-move-md { color:#fcd34d; }
-.earn-move-lo { color:#9ca3af; }
+.ec{display:flex;flex-direction:column;gap:4px;padding:8px 12px}
+.ec-card{background:#0d1117;border:1px solid rgba(255,255,255,.09);border-radius:6px;overflow:hidden;max-width:420px}
+.ec-head{display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:#080b10;border-bottom:1px solid rgba(255,255,255,.07)}
+.ec-sym{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;color:#fff}
+.ec-date{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6b7280;margin-left:8px}
+.ec-today{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:#00c4b4;background:rgba(0,196,180,.12);border:1px solid rgba(0,196,180,.3);padding:1px 6px;border-radius:3px;margin-left:8px}
+.ec-bmo{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;color:#00c4b4}
+.ec-amc{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;color:#f59e0b}
+.ec-tbd{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#4a4e62}
+.ec-body{display:grid;grid-template-columns:90px 115px 90px}
+.ec-cell{padding:5px 10px;border-right:1px solid rgba(255,255,255,.05)}
+.ec-cell:last-child{border-right:none}
+.ec-lbl{font-size:8px;font-weight:700;color:#4a4e62;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
+.ec-val{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#fff;line-height:1.2}
+.ec-hi{color:#f87171}.ec-md{color:#fcd34d}.ec-lo{color:#9ca3af}
 </style>""", unsafe_allow_html=True)
 
-            cards_html = '<div class="earn-cards">'
+            cards = '<div class="ec">'
             for e in upcoming:
-                d      = e["date"]
                 sym    = e["sym"]
+                d      = e["date"]
                 timing = e.get("timing","—")
                 eps    = e.get("eps_est","—")
                 is_today = d == today_str
-
-                date_disp = "TODAY" if is_today \
-                    else datetime.strptime(d, "%Y-%m-%d").strftime("%b %d")
-                date_html = '<span class="earn-card-today-pill">TODAY</span>' if is_today \
-                    else f'<span class="earn-card-date-pill">{date_disp}</span>'
-
-                if timing == "BMO":
-                    tim_html = '<span class="earn-bmo">▲ BMO</span>'
-                elif timing == "AMC":
-                    tim_html = '<span class="earn-amc">▼ AMC</span>'
-                else:
-                    tim_html = '<span style="color:#4a4e62">— TBD</span>'
-
+                try:
+                    date_disp = "Today" if is_today else datetime.strptime(d,"%Y-%m-%d").strftime("%b %d")
+                except Exception:
+                    date_disp = d
+                date_html = f'<span class="ec-today">{date_disp}</span>' if is_today else f'<span class="ec-date">{date_disp}</span>'
+                if timing == "BMO":   tim = '<span class="ec-bmo">▲ BMO</span>'
+                elif timing == "AMC": tim = '<span class="ec-amc">▼ AMC</span>'
+                else:                 tim = '<span class="ec-tbd">— TBD</span>'
                 em = expected_moves.get(sym)
                 if em:
-                    mp = em["move_pct"]
-                    md = em["move_dollar"]
-                    mc = "earn-move-hi" if mp>=10 else ("earn-move-md" if mp>=5 else "earn-move-lo")
-                    em_html = f'<span class="{mc}">±{mp:.1f}%</span>'
-                    em_sub  = f'<span style="font-size:9px;color:#4a4e62"> ±${md:.2f}</span>'
+                    mp = em["move_pct"]; md = em["move_dollar"]
+                    mc = "ec-hi" if mp>=10 else ("ec-md" if mp>=5 else "ec-lo")
+                    em_val = f'<span class="{mc}">±{mp:.1f}%</span>'
+                    em_sub = f'<span style="font-size:9px;color:#4a4e62"> ±${md:.2f}</span>'
                 else:
-                    em_html = '<span style="color:#4a4e62">—</span>'
-                    em_sub  = ''
-
+                    em_val,em_sub = '<span class="ec-lo">—</span>',''
                 border = "#00c4b4" if timing=="BMO" else ("#f59e0b" if timing=="AMC" else "#6366f1")
+                cards += f'''<div class="ec-card" style="border-left:2px solid {border}">
+  <div class="ec-head">
+    <div style="display:flex;align-items:center"><span class="ec-sym">{sym}</span>{date_html}</div>
+    {tim}
+  </div>
+  <div class="ec-body">
+    <div class="ec-cell"><div class="ec-lbl">EPS Est</div><div class="ec-val">{eps}</div></div>
+    <div class="ec-cell"><div class="ec-lbl">Exp Move</div><div class="ec-val">{em_val}{em_sub}</div></div>
+    <div class="ec-cell"><div class="ec-lbl">Timing</div><div class="ec-val" style="font-size:11px">{tim}</div></div>
+  </div>
+</div>'''
+            cards += '</div>'
+            col_a, col_b = st.columns([1,1])
+            with col_a:
+                st.markdown(cards, unsafe_allow_html=True)
+    else:
+        src = econ[0].get("source","") if econ else ""
+        if src == "forexfactory":
+            st.markdown('''<div style="padding:6px 14px 2px"><a href="https://www.forexfactory.com/calendar" target="_blank" style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#f59e0b;text-decoration:none;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);padding:2px 10px;border-radius:4px">🏭 Forex Factory ↗</a></div>''', unsafe_allow_html=True)
+        hdr = '''<div style="display:grid;grid-template-columns:65px 45px 55px 45px 1fr 75px 75px;gap:0;padding:6px 14px;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.05)">'''
+        for lbl in ["DATE","TIME","CCY","IMP","EVENT","FORECAST","ACTUAL"]:
+            hdr += f'<span style="font-family:monospace;font-size:9px;font-weight:700;color:#4a4e62;text-transform:uppercase">{lbl}</span>'
+        hdr += '</div>'
+        st.markdown(hdr, unsafe_allow_html=True)
+        rows_html = ""
+        for e in (econ or [])[:30]:
+            d = e.get("date",""); is_t = d==today_str
+            dd = "TODAY" if is_t else d[5:] if len(d)>=7 else d
+            dc = "color:#fcd34d;font-weight:700" if is_t else "color:#6b7280"
+            imp = e.get("impact","LOW")
+            ic  = "color:#f87171" if imp=="HIGH" else ("color:#fcd34d" if imp=="MED" else "color:#4a4e62")
+            ccy = e.get("currency","USD")
+            cc  = "#4ade80" if ccy=="USD" else ("#60a5fa" if ccy in ("EUR","GBP") else "#a78bfa")
+            actual = e.get("actual","—"); fore = e.get("estimate","—"); act_c=""
+            try:
+                a=float(re.sub(r"[^0-9.\-]","",actual)); f=float(re.sub(r"[^0-9.\-]","",fore))
+                act_c="color:#4ade80;font-weight:700" if a>f else ("color:#f87171;font-weight:700" if a<f else "")
+            except: pass
+            rows_html += f'''<div style="display:grid;grid-template-columns:65px 45px 55px 45px 1fr 75px 75px;gap:0;padding:7px 14px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;{dc}">{dd}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6b7280">{e.get('time','—')}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:{cc}">{ccy}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;{ic}">{imp}</span>
+  <span style="font-size:12px;color:#e2e4e9">{e.get('event','')}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9ca3af;text-align:right">{fore}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-align:right;{act_c}">{actual}</span>
+</div>'''
+        if rows_html: st.markdown(rows_html, unsafe_allow_html=True)
+        else: st.markdown('<div class="sc-empty">No economic events found</div>', unsafe_allow_html=True)
 
-                cards_html += f"""<div class="earn-card" style="border-left:2px solid {border}">
-  <div class="earn-card-head">
-    <div style="display:flex;align-items:center;gap:7px">
-      <span class="earn-card-sym">{sym}</span>{date_html}
-    </div>
-    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700">{tim_html}</span>
-  </div>
-  <div class="earn-card-body">
-    <div class="earn-card-cell">
-      <div class="earn-card-lbl">EPS Est</div>
-      <div class="earn-card-val">{eps}</div>
-    </div>
-    <div class="earn-card-cell">
-      <div class="earn-card-lbl">Exp Move</div>
-      <div class="earn-card-val">{em_html}{em_sub}</div>
-    </div>
-    <div class="earn-card-cell">
-      <div class="earn-card-lbl">Timing</div>
-      <div class="earn-card-val" style="font-size:11px">{tim_html}</div>
-    </div>
-  </div>
-</div>"""
-            cards_html += '</div>'
-            col_cards, col_pad = st.columns([1, 1])
-            with col_cards:
-                st.markdown(cards_html, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 # ── market index summary bar ──────────────────────────────────────────────────
@@ -2184,71 +1983,33 @@ st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 # ── live data fragment — reruns every 30s without touching the rest of the page
 @st.fragment(run_every=30)
 def live_dashboard():
-    results = {}
-
-    def _fetch(key, fn, *args):
-        try:
-            results[key] = fn(*args)
-        except Exception:
-            results[key] = {} if key in ("scan", "expmove") else []
-
-    # Step 1 — fetch universe first (fast, cached after first run)
+    # Always render immediately using whatever is in cache.
+    # @st.cache_data handles staleness — if TTL expired it re-fetches,
+    # but the fragment itself never stalls waiting for a result.
     tickers = fetch_universe()
+    t       = tuple(tickers)
 
-    # Step 2 — fire ALL slow fetches in parallel
+    # Fetch everything — returns cached instantly if warm, fetches if cold
+    market_data    = fetch_market_data(t)    or {}
+    quotes         = market_data.get("quotes", [])
+    scan_data      = market_data.get("scan",   {})
+    index_data     = fetch_index_bar()        or []
+    news           = fetch_news()             or []
+    earnings_cal   = fetch_earnings_calendar()or []
+    econ_cal       = fetch_econ_calendar()    or []
+    flow_items     = fetch_options_flow()     or []
+    vol_spikes     = fetch_volume_spikes(t)   or []
+
+    # Expected moves — derive syms from fresh earnings
+    today_s = str(datetime.now().date())
     try:
-        _today_str = str(datetime.now().date())
-        # Use cached earnings if available to get upcoming syms without blocking
-        _cached_earnings = fetch_earnings_calendar() or []
-        _upcoming_syms = tuple(list(dict.fromkeys(
-            e.get("sym") for e in _cached_earnings
-            if e.get("sym") and e.get("date","") >= _today_str
-        ))[:15])
-    except Exception:
-        _upcoming_syms = ()
-        _cached_earnings = []
-
-    fetch_jobs = {
-        "market":   (fetch_market_data,       (tuple(tickers),)),
-        "news":     (fetch_news,              ()),
-        "index":    (fetch_index_bar,         ()),
-        "earnings": (fetch_earnings_calendar, ()),
-        "econ":     (fetch_econ_calendar,     ()),
-        "flow":     (fetch_options_flow,      ()),
-        "vol":      (fetch_volume_spikes,     (tuple(tickers),)),
-    }
-
-    results = {}
-    for key, (fn, args) in fetch_jobs.items():
-        try:
-            results[key] = fn(*args)
-        except Exception:
-            results[key] = {} if key == "market" else []
-
-    # Now compute expected moves using fresh earnings data
-    earnings_cal = results.get("earnings", _cached_earnings) or []
-    try:
-        _today_str2  = str(datetime.now().date())
-        _fresh_syms  = tuple(list(dict.fromkeys(
+        fresh_syms = tuple(list(dict.fromkeys(
             e.get("sym") for e in earnings_cal
-            if e.get("sym") and e.get("date","") >= _today_str2
-        ))[:15])
+            if e.get("sym") and e.get("date","") >= today_s
+        ))[:12])
     except Exception:
-        _fresh_syms = _upcoming_syms
-
-    try:
-        expected_moves = fetch_expected_moves(_fresh_syms)
-    except Exception:
-        expected_moves = {}
-
-    market_data  = results.get("market",   {})
-    quotes       = market_data.get("quotes", [])
-    scan_data    = market_data.get("scan",   {})
-    news         = results.get("news",     [])
-    index_data   = results.get("index",    [])
-    econ_cal     = results.get("econ",     []) or []
-    flow_items   = results.get("flow",     [])
-    vol_spikes   = results.get("vol",      [])
+        fresh_syms = ()
+    expected_moves = fetch_expected_moves(fresh_syms) or {}
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
