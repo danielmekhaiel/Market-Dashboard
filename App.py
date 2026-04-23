@@ -987,24 +987,25 @@ gap:0;padding:6px 12px;background:rgba(0,0,0,.3);border-bottom:1px solid rgba(25
 
         st.markdown(rows_html, unsafe_allow_html=True)
 
-        # Hidden buttons for Streamlit click state — visually hidden via CSS
-        st.markdown('<div style="height:0;overflow:hidden;position:absolute;pointer-events:none">', unsafe_allow_html=True)
-        for q in page_rows:
-            sym = clean(q["ticker"])
-            if st.button(sym, key=f"btn_{page_key}_{sym}"):
-                if st.session_state.get("selected_ticker") == sym:
-                    st.session_state["selected_ticker"] = None
-                    st.session_state["selected_quote"]  = None
-                else:
-                    st.session_state["selected_ticker"] = sym
-                    st.session_state["selected_quote"]  = q
-                st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
         st.markdown(
             f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
             f'{min(start+ROWS_PER_PAGE,len(filtered))} of {len(filtered)}</span></div>',
             unsafe_allow_html=True)
+
+        # Ticker selector — clean dropdown, no rogue buttons
+        sym_options = ["— select ticker —"] + [clean(q["ticker"]) for q in page_rows]
+        selected = st.selectbox("View ticker detail", sym_options,
+                                key=f"{page_key}_select", label_visibility="collapsed")
+        if selected and selected != "— select ticker —":
+            match = next((q for q in page_rows if clean(q["ticker"]) == selected), None)
+            if match:
+                if st.session_state.get("selected_ticker") == selected:
+                    st.session_state["selected_ticker"] = None
+                    st.session_state["selected_quote"]  = None
+                else:
+                    st.session_state["selected_ticker"] = selected
+                    st.session_state["selected_quote"]  = match
+                st.rerun()
 
     st.markdown('</div>', unsafe_allow_html=True)
     _pg_controls(page_key, len(filtered))
@@ -1103,37 +1104,60 @@ def render_gap_panel(title, rows, direction, page_key):
                 f'{fill_pct:.0f}%</span></div>'
             )
 
-            col1, col2, col3, col4, col5, col6 = st.columns([2.5, 1.5, 2, 2, 1.5, 1.5])
-            with col1:
-                if st.button(f"{'▲' if is_up else '▼'} {sym}",
-                             key=f"btn_{page_key}_{sym}", use_container_width=True):
-                    if st.session_state.get("selected_ticker") == sym:
-                        st.session_state["selected_ticker"] = None
-                        st.session_state["selected_quote"]  = None
-                    else:
-                        st.session_state["selected_ticker"] = sym
-                        st.session_state["selected_quote"]  = q
-                    st.rerun()
-            with col2:
-                st.markdown(f'<div class="{gap_cls}" style="padding-top:6px">{fmt_pct(q["gap_pct"])}</div>',
-                            unsafe_allow_html=True)
-            with col3:
-                st.markdown(f'<div style="padding-top:4px">{status_html}</div>',
-                            unsafe_allow_html=True)
-            with col4:
-                st.markdown(f'<div style="padding-top:6px">{fill_html}</div>',
-                            unsafe_allow_html=True)
-            with col5:
-                st.markdown(f'<div class="{pct_cc}" style="padding-top:6px">{fmt_pct(q["pct"])}</div>',
-                            unsafe_allow_html=True)
-            with col6:
-                st.markdown(f'<div class="c-vol" style="padding-top:6px">{fmt_vol(q.get("volume"))}</div>',
-                            unsafe_allow_html=True)
+            gap_rows_html = ""
+            for q in page_rows:
+                sym    = clean(q["ticker"])
+                status = q["status"]
+                fill_pct = q["fill_pct"]
+                sc     = q["status_color"]
+                pct_color = "#4ade80" if (q["pct"] or 0) >= 0 else "#f87171"
+                gap_color = "#4ade80" if is_up else "#f87171"
+
+                status_badge = (
+                    f'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;'
+                    f'font-weight:700;padding:2px 7px;border-radius:4px;'
+                    f'background:{sc}20;color:{sc};border:1px solid {sc}50">{status}</span>'
+                )
+                bar_color = "#f87171" if fill_pct>=95 else ("#f59e0b" if fill_pct>=50 else "#4ade80")
+                fill_bar = (
+                    f'<div style="display:flex;align-items:center;gap:5px">'
+                    f'<div style="width:48px;height:5px;background:rgba(255,255,255,.08);'
+                    f'border-radius:3px;overflow:hidden">'
+                    f'<div style="width:{fill_pct:.0f}%;height:100%;background:{bar_color};border-radius:3px"></div>'
+                    f'</div>'
+                    f'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#9ca3af">{fill_pct:.0f}%</span></div>'
+                )
+                gap_rows_html += f"""<div style="display:grid;grid-template-columns:90px 70px 100px 110px 70px 70px;
+  gap:0;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#fff">{'▲' if is_up else '▼'} {sym}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:{gap_color}">{fmt_pct(q['gap_pct'])}</span>
+  <span>{status_badge}</span>
+  <span>{fill_bar}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{pct_color}">{fmt_pct(q['pct'])}</span>
+  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b7280;text-align:right">{fmt_vol(q.get('volume'))}</span>
+</div>"""
+
+            st.markdown(gap_rows_html, unsafe_allow_html=True)
 
         st.markdown(
             f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
             f'{min(start+ROWS_PER_PAGE,len(enriched))} of {len(enriched)}</span></div>',
             unsafe_allow_html=True)
+
+        # Selectbox for ticker detail — no rogue buttons
+        sym_opts = ["— select ticker —"] + [clean(q["ticker"]) for q in page_rows]
+        gsel = st.selectbox("View gap ticker", sym_opts,
+                            key=f"{page_key}_gsel", label_visibility="collapsed")
+        if gsel and gsel != "— select ticker —":
+            match = next((q for q in page_rows if clean(q["ticker"]) == gsel), None)
+            if match:
+                if st.session_state.get("selected_ticker") == gsel:
+                    st.session_state["selected_ticker"] = None
+                    st.session_state["selected_quote"]  = None
+                else:
+                    st.session_state["selected_ticker"] = gsel
+                    st.session_state["selected_quote"]  = match
+                st.rerun()
 
     # Legend
     st.markdown("""<div style="padding:8px 14px;border-top:1px solid rgba(255,255,255,.04);
