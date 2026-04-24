@@ -1015,101 +1015,164 @@ def render_ticker_detail(ticker, quote):
 def render_scan_panel(title, rows, direction, page_key, scan_data=None):
     scan_data = scan_data or {}
     is_bull   = direction == "BULL"
+    CARDS_PER_PAGE = 8
+
     if page_key not in st.session_state: st.session_state[page_key] = 1
-    page  = min(st.session_state[page_key], max(1, (len(rows) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE))
-    start = (page - 1) * ROWS_PER_PAGE
 
     sig_options = ["All", "VOL 2x+", "VWAP+", "RS+ vs SPY", "Near 52W High", "Momentum", "Bull Flag", "Bear Flag"]
-    sig_filter  = st.selectbox("Signal filter", sig_options,
+    sig_filter  = st.selectbox("Filter by signal", sig_options,
                                key=f"{page_key}_sig", label_visibility="collapsed")
 
     def _matches(q):
-        sd = scan_data.get(q["ticker"], {})
+        sd   = scan_data.get(q["ticker"], {})
         sigs = [s[0] for s in sd.get("signals", [])]
-        if sig_filter == "VOL 2x+":        return "VOL" in sigs
-        if sig_filter == "VWAP+":          return "VWAP+" in sigs
-        if sig_filter == "RS+ vs SPY":     return "RS+" in sigs
-        if sig_filter == "Near 52W High":  return "52W↑" in sigs
-        if sig_filter == "Momentum":       return "MOM" in sigs
-        if sig_filter == "Bull Flag":      return "BULL🚩" in sigs
-        if sig_filter == "Bear Flag":      return "BEAR🚩" in sigs
+        if sig_filter == "VOL 2x+":       return "VOL"   in sigs
+        if sig_filter == "VWAP+":         return "VWAP+" in sigs
+        if sig_filter == "RS+ vs SPY":    return "RS+"   in sigs
+        if sig_filter == "Near 52W High": return "52W↑"  in sigs
+        if sig_filter == "Momentum":      return "MOM"   in sigs
+        if sig_filter == "Bull Flag":     return "BULL🚩" in sigs
+        if sig_filter == "Bear Flag":     return "BEAR🚩" in sigs
         return True
 
     filtered  = [q for q in rows if _matches(q)]
-    page_rows = filtered[start: start + ROWS_PER_PAGE]
+    page      = min(st.session_state[page_key],
+                    max(1, (len(filtered) + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE))
+    start     = (page - 1) * CARDS_PER_PAGE
+    page_rows = filtered[start: start + CARDS_PER_PAGE]
 
-    panel_cls = "sc-panel-bull" if is_bull else "sc-panel-bear"
-    cnt_cls   = "sc-count-bull" if is_bull else "sc-count-bear"
+    accent    = "#22c55e" if is_bull else "#ef4444"
+    dir_label = "BULLISH" if is_bull else "BEARISH"
+    dir_emoji = "🟢" if is_bull else "🔴"
 
-    st.markdown(f"""<div class="sc-panel {panel_cls}">
+    st.markdown(f"""<div class="sc-panel" style="border-top:2px solid {accent}">
   <div class="sc-panel-head">
-    <span class="sc-panel-title">{title}</span>
-    <span class="sc-count {cnt_cls}">{len(filtered)}</span>
+    <span class="sc-panel-title">{dir_emoji} {title}</span>
+    <span class="sc-count" style="background:{accent}18;color:{accent};border:1px solid {accent}44">{len(filtered)}</span>
   </div>""", unsafe_allow_html=True)
 
     if not page_rows:
         st.markdown('<div class="sc-empty">NO RESULTS</div>', unsafe_allow_html=True)
     else:
-        # Header
-        st.markdown("""<div style="display:grid;grid-template-columns:90px 70px 65px 65px 1fr;
-gap:0;padding:6px 12px;background:rgba(0,0,0,.3);border-bottom:1px solid rgba(255,255,255,.05)">
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase">SYMBOL</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">PRICE</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">CHG%</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;text-align:right">VOL</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#4a4e62;text-transform:uppercase;padding-left:8px">SIGNALS</span>
-</div>""", unsafe_allow_html=True)
+        st.markdown("""<style>
+.scard-wrap{display:flex;flex-direction:column;gap:8px;padding:10px 12px}
+.scard{background:#0a0e14;border:1px solid rgba(255,255,255,.09);border-radius:8px;overflow:hidden}
+.scard-head{display:flex;align-items:center;justify-content:space-between;
+    padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.scard-sym{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;color:#fff;letter-spacing:.5px}
+.scard-name{font-family:'DM Sans',sans-serif;font-size:11px;color:#6b7280;margin-top:1px}
+.scard-price{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#fff}
+.scard-pct-pos{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#22c55e}
+.scard-pct-neg{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#ef4444}
+.scard-dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;
+    font-family:'IBM Plex Mono',monospace;letter-spacing:.5px}
+.scard-body{padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.scard-row{display:flex;align-items:center;justify-content:space-between}
+.scard-lbl{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;
+    color:#4a4e62;text-transform:uppercase;letter-spacing:1px}
+.scard-val{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#e2e4e9}
+.scard-divider{height:1px;background:rgba(255,255,255,.05);margin:2px 0}
+.scard-sigs{display:flex;flex-wrap:wrap;gap:4px;padding:6px 12px;
+    border-top:1px solid rgba(255,255,255,.05)}
+.scard-sig{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
+    padding:2px 7px;border-radius:4px}
+.scard-footer{display:flex;align-items:center;justify-content:space-between;
+    padding:5px 12px;background:rgba(0,0,0,.2);border-top:1px solid rgba(255,255,255,.05)}
+.scard-footer-lbl{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#3d4158}
+</style>""", unsafe_allow_html=True)
 
-        rows_html = ""
+        cards_html = '<div class="scard-wrap">'
         for q in page_rows:
             sym  = clean(q["ticker"])
             pct  = q["pct"] or 0
-            pct_color = "#4ade80" if pct >= 0 else "#f87171"
+            price= q.get("price") or 0
+            vol  = q.get("volume")
+            prev = q.get("prev_close") or 0
+            opn  = q.get("open") or 0
             sd   = scan_data.get(sym, {})
             sigs = sd.get("signals", [])
+            vwap = sd.get("vwap_val")
+            rs   = sd.get("rel_strength")
+            vr   = sd.get("vol_ratio")
 
-            badge_html = ""
-            for tag, tip, color in sigs[:4]:
-                badge_html += (
-                    f'<span title="{tip}" style="font-family:\'IBM Plex Mono\',monospace;'
-                    f'font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;'
-                    f'margin-right:3px;background:{color}20;color:{color};'
-                    f'border:1px solid {color}50;">{tag}</span>'
-                )
+            pct_cls = "scard-pct-pos" if pct >= 0 else "scard-pct-neg"
+            dir_style = f"background:{'rgba(34,197,94,.15)' if is_bull else 'rgba(239,68,68,.15)'};" \
+                        f"color:{accent};border:1px solid {accent}44"
 
-            rows_html += f"""<div class="scan-row" onclick="window.scanClick='{sym}'"
-  style="display:grid;grid-template-columns:90px 70px 65px 65px 1fr;
-  gap:0;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.04);
-  align-items:center;cursor:pointer;transition:background .15s"
-  onmouseover="this.style.background='rgba(99,102,241,.07)'"
-  onmouseout="this.style.background='transparent'">
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#ffffff">{'🟢' if pct>=0 else '🔴'} {sym}</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#e2e4e9;text-align:right">${fmt_price(q['price'])}</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:{pct_color};text-align:right">{fmt_pct(pct)}</span>
-  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b7280;text-align:right">{fmt_vol(q.get('volume'))}</span>
-  <span style="padding-left:8px">{badge_html}</span>
+            # Key levels — support/resistance approximations from prev data
+            support = round(min(opn, prev) * 0.99, 2) if opn and prev else None
+            resist  = round(max(opn, prev) * 1.01, 2) if opn and prev else None
+
+            # Signal badges
+            sig_html = ""
+            for tag, tip, color in sigs[:5]:
+                sig_html += (f'<span class="scard-sig" title="{tip}" '
+                             f'style="background:{color}18;color:{color};border:1px solid {color}44">'
+                             f'{tag}</span>')
+
+            # Stats
+            def _stat(lbl, val):
+                return (f'<div class="scard-row">'
+                        f'<span class="scard-lbl">{lbl}</span>'
+                        f'<span class="scard-val">{val}</span></div>')
+
+            stats_html = ""
+            stats_html += _stat("Direction", f'<span class="scard-dir" style="{dir_style}">{dir_label}</span>')
+            stats_html += _stat("Price", f'${fmt_price(price)}')
+            stats_html += _stat("Change", f'<span class="{pct_cls}">{fmt_pct(pct)}</span>')
+            stats_html += '<div class="scard-divider"></div>'
+            stats_html += _stat("Open", f'${fmt_price(opn)}')
+            stats_html += _stat("Prev Close", f'${fmt_price(prev)}')
+            if vwap:
+                vwap_color = "#22c55e" if price > vwap else "#ef4444"
+                stats_html += _stat("VWAP", f'<span style="color:{vwap_color}">${fmt_price(vwap)}</span>')
+            stats_html += '<div class="scard-divider"></div>'
+            if support:
+                stats_html += _stat("Support", f'<span style="color:#60a5fa">${fmt_price(support)}</span>')
+            if resist:
+                stats_html += _stat("Resistance", f'<span style="color:#f87171">${fmt_price(resist)}</span>')
+            if rs is not None:
+                rs_color = "#22c55e" if rs >= 0 else "#ef4444"
+                stats_html += _stat("vs SPY", f'<span style="color:{rs_color}">{rs:+.1f}%</span>')
+            if vr:
+                vr_color = "#06b6d4" if vr >= 2 else "#9ca3af"
+                stats_html += _stat("Vol Ratio", f'<span style="color:{vr_color}">{vr:.1f}x avg</span>')
+
+            cards_html += f"""<div class="scard" style="border-left:3px solid {accent}">
+  <div class="scard-head">
+    <div>
+      <div class="scard-sym">{sym}</div>
+      <div class="scard-name">Vol: {fmt_vol(vol)}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="scard-price">${fmt_price(price)}</div>
+      <div class="{pct_cls}">{fmt_pct(pct)}</div>
+    </div>
+  </div>
+  <div class="scard-body">{stats_html}</div>
+  {"<div class='scard-sigs'>" + sig_html + "</div>" if sig_html else ""}
+  <div class="scard-footer">
+    <span class="scard-footer-lbl">Educational only · not financial advice</span>
+    <span class="scard-footer-lbl">{datetime.now().strftime("%H:%M ET")}</span>
+  </div>
 </div>"""
 
-        st.markdown(rows_html, unsafe_allow_html=True)
+        cards_html += '</div>'
+        st.markdown(cards_html, unsafe_allow_html=True)
 
         st.markdown(
-            f'<div class="sc-pg"><span class="pg-info">Showing {start+1}–'
-            f'{min(start+ROWS_PER_PAGE,len(filtered))} of {len(filtered)}</span></div>',
+            f'<div class="sc-pg"><span class="pg-info">{start+1}–'
+            f'{min(start+CARDS_PER_PAGE,len(filtered))} of {len(filtered)}</span></div>',
             unsafe_allow_html=True)
 
-        # Ticker selector — clean dropdown, no rogue buttons
-        sym_options = ["— select ticker —"] + [clean(q["ticker"]) for q in page_rows]
-        selected = st.selectbox("View ticker detail", sym_options,
+        sym_options = ["— view ticker detail —"] + [clean(q["ticker"]) for q in page_rows]
+        selected = st.selectbox("View detail", sym_options,
                                 key=f"{page_key}_select", label_visibility="collapsed")
-        if selected and selected != "— select ticker —":
+        if selected and selected != "— view ticker detail —":
             match = next((q for q in page_rows if clean(q["ticker"]) == selected), None)
             if match:
-                if st.session_state.get("selected_ticker") == selected:
-                    st.session_state["selected_ticker"] = None
-                    st.session_state["selected_quote"]  = None
-                else:
-                    st.session_state["selected_ticker"] = selected
-                    st.session_state["selected_quote"]  = match
+                st.session_state["selected_ticker"] = selected
+                st.session_state["selected_quote"]  = match
                 st.rerun()
 
     st.markdown('</div>', unsafe_allow_html=True)
