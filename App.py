@@ -2217,28 +2217,70 @@ if "selected_ticker" not in st.session_state:
 # ── header (static — never re-runs) ──────────────────────────────────────────
 st.markdown('<div class="sc-wrap">', unsafe_allow_html=True)
 
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_market_data_cached(tickers_tuple):
+    """Thin wrapper that marks last-fetch time so we know if data is fresh."""
+    data = fetch_market_data(tickers_tuple)
+    return data, datetime.now().isoformat()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_gap_data_cached(tickers_tuple):
+    return fetch_gap_data(tickers_tuple), datetime.now().isoformat()
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def fetch_slow_data():
+    """Bundle slower fetches into one cached call."""
+    return {
+        "news":     fetch_news(),
+        "earnings": fetch_earnings_calendar(),
+        "econ":     fetch_econ_calendar(),
+        "flow":     fetch_options_flow(),
+    }
+
+
 # ── live data fragment — reruns every 30s without touching the rest of the page
 @st.fragment(run_every=30)
 def live_dashboard():
-    # Always render immediately using whatever is in cache.
-    # @st.cache_data handles staleness — if TTL expired it re-fetches,
-    # but the fragment itself never stalls waiting for a result.
     tickers = fetch_universe()
     t       = tuple(tickers)
 
-    # Fetch everything — returns cached instantly if warm, fetches if cold
-    market_data    = fetch_market_data(t)    or {}
-    quotes         = market_data.get("quotes", [])
-    scan_data      = market_data.get("scan",   {})
-    index_data     = fetch_index_bar()        or []
-    news           = fetch_news()             or []
-    earnings_cal   = fetch_earnings_calendar()or []
-    econ_cal       = fetch_econ_calendar()    or []
-    flow_items     = fetch_options_flow()     or []
-    vol_spikes     = fetch_volume_spikes(t)   or []
-    gap_data       = fetch_gap_data(t)        or []
+    # ── Read everything from cache — NEVER block the render ──────────────────
+    # If cache is warm → instant. If cold → show empty state, cache fills async.
+    try:
+        market_result, _ = fetch_market_data_cached(t)
+    except Exception:
+        market_result = {}
 
-    # Expected moves — derive syms from fresh earnings
+    try:
+        gap_result, _ = fetch_gap_data_cached(t)
+    except Exception:
+        gap_result = []
+
+    try:
+        slow = fetch_slow_data()
+    except Exception:
+        slow = {}
+
+    try:
+        index_data = fetch_index_bar()
+    except Exception:
+        index_data = []
+
+    quotes     = (market_result or {}).get("quotes", [])
+    scan_data  = (market_result or {}).get("scan",   {})
+    gap_data   = gap_result or []
+    news       = (slow or {}).get("news",     [])
+    earnings_cal = (slow or {}).get("earnings", []) or []
+    econ_cal   = (slow or {}).get("econ",     []) or []
+    flow_items = (slow or {}).get("flow",     [])
+
+    try:
+        vol_spikes = fetch_volume_spikes(t)
+    except Exception:
+        vol_spikes = []
+
     today_s = str(datetime.now().date())
     try:
         fresh_syms = tuple(list(dict.fromkeys(
@@ -2247,14 +2289,17 @@ def live_dashboard():
         ))[:12])
     except Exception:
         fresh_syms = ()
-    expected_moves = fetch_expected_moves(fresh_syms) or {}
+
+    try:
+        expected_moves = fetch_expected_moves(fresh_syms)
+    except Exception:
+        expected_moves = {}
 
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
     bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
-    gap_data  = fetch_gap_data(t)
-    gap_up    = [q for q in gap_data if q["gap_pct"] >= GAP_THRESHOLD]
-    gap_dn    = [q for q in gap_data if q["gap_pct"] <= -GAP_THRESHOLD]
+    gap_up    = [q for q in gap_data if q.get("gap_pct", 0) >= GAP_THRESHOLD]
+    gap_dn    = [q for q in gap_data if q.get("gap_pct", 0) <= -GAP_THRESHOLD]
 
     now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
 
