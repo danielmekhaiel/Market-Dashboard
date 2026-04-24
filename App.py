@@ -414,6 +414,51 @@ def _pg_controls(page_key, total):
 
 
 # ── data ──────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300)
+def fetch_universe():
+    syms  = []
+    block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT",
+             "WITH","ALL","NEW","INC","LLC","LTD","PLC","EST","EDT","AM","PM","IPO"}
+
+    # ── Finviz most-active ────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            "https://finviz.com/screener.ashx?v=111&s=ta_topvolume&o=-volume",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finviz.com/"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            for s in re.findall(r'class="screener-link-primary">([A-Z]{1,5})<', r.text):
+                if s not in syms and s not in block:
+                    syms.append(s)
+    except Exception:
+        pass
+
+    # ── Yahoo Finance most active fallback ────────────────────────────────────
+    if len(syms) < 20:
+        try:
+            r = requests.get(
+                "https://finance.yahoo.com/markets/stocks/most-active/",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
+            )
+            for s in re.findall(r'"symbol":"([A-Z]{1,5})"', r.text):
+                if s not in syms and s not in block:
+                    syms.append(s)
+        except Exception:
+            pass
+
+    # ── Core watchlist always included ───────────────────────────────────────
+    core = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
+            "JPM","V","XOM","MA","BAC","WMT","UNH","GS","NFLX","COIN",
+            "PLTR","SOFI","MARA","GME","SMCI","ARM","MU","AVGO","UBER","SNAP"]
+    for s in core:
+        if s not in syms:
+            syms.append(s)
+
+    clean_syms = [s for s in dict.fromkeys(syms) if 1 < len(s) <= 5 and s not in block]
+    return clean_syms[:60]
+
+
 @st.cache_data(ttl=30)
 def fetch_market_data(tickers_tuple):
     """
