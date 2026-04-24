@@ -674,8 +674,113 @@ def fetch_ticker_news(ticker):
         return []
 
 
-@st.cache_data(ttl=300)
-def fetch_universe():
+@st.cache_data(ttl=60)
+def fetch_gap_data(tickers_tuple):
+    """
+    Fetch true pre-market gap data.
+    Gap = (today's pre-market/open price - yesterday's close) / yesterday's close
+    Uses 1-day 1m interval which includes pre-market data (4am-9:30am).
+    Only returns tickers with a real gap of 1.5%+.
+    """
+    import pandas as pd
+    tickers   = list(tickers_tuple)
+    gaps      = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Download 2 days of 1m data — includes pre-market for today
+    try:
+        raw = yf.download(
+            tickers, period="2d", interval="1m",
+            group_by="ticker", auto_adjust=True,
+            progress=False, threads=False,
+            prepost=True,   # include pre/post market data
+        )
+    except Exception:
+        return []
+
+    # Daily for prev close
+    try:
+        daily_raw = yf.download(
+            tickers, period="5d", interval="1d",
+            group_by="ticker", auto_adjust=True,
+            progress=False, threads=False,
+        )
+    except Exception:
+        daily_raw = pd.DataFrame()
+
+    for t in tickers:
+        try:
+            def _get(all_data, sym):
+                if all_data is None or all_data.empty:
+                    return pd.DataFrame()
+                if not isinstance(all_data.columns, pd.MultiIndex):
+                    return all_data
+                return all_data[sym] if sym in all_data.columns.get_level_values(0) \
+                    else pd.DataFrame()
+
+            intra = _get(raw, t)
+            daily = _get(daily_raw, t)
+
+            if intra is None or intra.empty:
+                continue
+
+            # Yesterday's official close
+            prev_close = None
+            if daily is not None and not daily.empty and len(daily) >= 2:
+                prev_close = float(daily["Close"].iloc[-2])
+            if not prev_close:
+                continue
+
+            # Today's data only (including pre-market)
+            today_mask = intra.index.strftime("%Y-%m-%d") == today_str
+            today_df   = intra[today_mask]
+            if today_df.empty:
+                # fallback — use last available
+                today_df = intra.tail(78)
+
+            # Pre-market open = first bar of today
+            premarket_open = float(today_df["Open"].iloc[0])
+
+            # Regular market open = first bar at or after 9:30 ET
+            market_df = today_df.copy()
+            try:
+                market_df.index = market_df.index.tz_convert("US/Eastern")
+                rth_mask  = (market_df.index.hour > 9) | \
+                            ((market_df.index.hour == 9) & (market_df.index.minute >= 30))
+                rth_df    = market_df[rth_mask]
+                open_p    = float(rth_df["Open"].iloc[0]) if not rth_df.empty else premarket_open
+            except Exception:
+                open_p = premarket_open
+
+            # Current price
+            price     = float(today_df["Close"].iloc[-1])
+            today_vol = int(today_df["Volume"].sum()) if "Volume" in today_df.columns else 0
+
+            # Gap % — measured from prev close to today's open
+            gap_pct = ((open_p - prev_close) / prev_close) * 100
+            pct     = ((price  - prev_close) / prev_close) * 100
+
+            # Only keep real gaps — 1.5%+
+            if abs(gap_pct) < GAP_THRESHOLD:
+                continue
+
+            gaps.append({
+                "ticker":     t,
+                "price":      price,
+                "open":       open_p,
+                "prev_close": prev_close,
+                "gap_pct":    gap_pct,
+                "pct":        pct,
+                "volume":     today_vol,
+                "change":     price - prev_close,
+            })
+        except Exception:
+            continue
+
+    # Sort by absolute gap size
+    return sorted(gaps, key=lambda x: abs(x["gap_pct"]), reverse=True)
+
+
     syms  = []
     block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT",
              "WITH","ALL","NEW","INC","LLC","LTD","PLC","EST","EDT","AM","PM","IPO"}
@@ -2023,6 +2128,7 @@ def live_dashboard():
     econ_cal       = fetch_econ_calendar()    or []
     flow_items     = fetch_options_flow()     or []
     vol_spikes     = fetch_volume_spikes(t)   or []
+    gap_data       = fetch_gap_data(t)        or []
 
     # Expected moves — derive syms from fresh earnings
     today_s = str(datetime.now().date())
@@ -2038,9 +2144,9 @@ def live_dashboard():
     valid     = [q for q in quotes if q["price"] is not None and q["pct"] is not None]
     bull      = sorted([q for q in valid if (q["pct"] or 0) >= 0], key=lambda x: x["pct"], reverse=True)
     bear      = sorted([q for q in valid if (q["pct"] or 0) <  0], key=lambda x: x["pct"])
-    gap_valid = [q for q in valid if q.get("gap_pct") is not None]
-    gap_up    = sorted([q for q in gap_valid if q["gap_pct"] >= GAP_THRESHOLD],  key=lambda x: x["gap_pct"], reverse=True)
-    gap_dn    = sorted([q for q in gap_valid if q["gap_pct"] <= -GAP_THRESHOLD], key=lambda x: x["gap_pct"])
+    gap_data  = fetch_gap_data(t)
+    gap_up    = [q for q in gap_data if q["gap_pct"] >= GAP_THRESHOLD]
+    gap_dn    = [q for q in gap_data if q["gap_pct"] <= -GAP_THRESHOLD]
 
     now_str = datetime.now().strftime("%b %d, %Y  %H:%M:%S")
 
