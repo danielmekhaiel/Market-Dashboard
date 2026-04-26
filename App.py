@@ -223,31 +223,31 @@ a.news-link:hover { color: #a5b4fc !important; }
     padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,.06);
     background: rgba(99,102,241,.06);
 }
-.td-sym { font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 700; color: #f0f1f5; }
-.td-name { font-size: 13px; color: #6b7280; margin-top: 2px; }
-.td-price { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 600; color: #e8eaf0; margin-left: auto; }
-.td-chg-pos { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #22c55e; font-weight: 600; }
-.td-chg-neg { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #ef4444; font-weight: 600; }
+.td-sym { font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 700; color: #ffffff; }
+.td-name { font-size: 14px; color: #c8cad6; margin-top: 2px; font-weight: 500; }
+.td-price { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; color: #ffffff; margin-left: auto; }
+.td-chg-pos { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #4ade80; font-weight: 700; }
+.td-chg-neg { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #f87171; font-weight: 700; }
 .td-stats { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,.06); }
 .td-stat {
-    flex: 1; padding: 14px 20px; border-right: 1px solid rgba(255,255,255,.05);
-    display: flex; flex-direction: column; gap: 4px;
+    flex: 1; padding: 14px 20px; border-right: 1px solid rgba(255,255,255,.06);
+    display: flex; flex-direction: column; gap: 5px;
 }
 .td-stat:last-child { border-right: none; }
-.td-stat-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 1.5px; color: #4a4e62; text-transform: uppercase; }
-.td-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #c8cad6; font-weight: 600; }
-.td-stat-value.pos { color: #22c55e; }
-.td-stat-value.neg { color: #ef4444; }
+.td-stat-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 1.2px; color: #6b7280; text-transform: uppercase; }
+.td-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #ffffff; font-weight: 700; }
+.td-stat-value.pos { color: #4ade80; }
+.td-stat-value.neg { color: #f87171; }
 .td-section-label {
-    font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 2px;
-    color: #4a4e62; text-transform: uppercase; padding: 12px 20px 6px;
-    border-bottom: 1px solid rgba(255,255,255,.04);
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 1.5px;
+    color: #6b7280; text-transform: uppercase; padding: 12px 20px 6px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
 }
-.td-news-row { padding: 10px 20px; border-bottom: 1px solid rgba(255,255,255,.03); font-size: 12px; color: #9ca3af; line-height: 1.4; }
+.td-news-row { padding: 10px 20px; border-bottom: 1px solid rgba(255,255,255,.04); font-size: 13px; color: #e2e4e9; line-height: 1.5; }
 .td-news-row:last-child { border-bottom: none; }
-a.td-news-link { color: #818cf8 !important; text-decoration: none; }
-a.td-news-link:hover { text-decoration: underline; }
-.td-news-src { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #4a4e62; margin-top: 2px; }
+a.td-news-link { color: #c8cad6 !important; text-decoration: none; }
+a.td-news-link:hover { color: #a5b4fc !important; text-decoration: underline; }
+.td-news-src { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #6b7280; margin-top: 3px; }
 .td-no-news { padding: 16px 20px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #3d4158; }
 
 /* ── options flow ── */
@@ -1849,7 +1849,70 @@ def fetch_earnings_calendar():
         except Exception:
             pass
 
-    # ── 2. Scrape earnings-calendar from multiple free sources ────────────────
+    # ── 2. NASDAQ free earnings API (no key needed, very reliable) ────────────
+    try:
+        today_fmt = today.strftime("%Y-%m-%d")
+        r = requests.get(
+            f"https://api.nasdaq.com/api/calendar/earnings?date={today_fmt}",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://www.nasdaq.com/",
+            },
+            timeout=15,
+        )
+        if r.status_code == 200:
+            js   = r.json()
+            rows = js.get("data", {}).get("rows", []) or []
+            for row in rows:
+                sym     = str(row.get("symbol","")).strip().upper()
+                eps_est = row.get("epsForecast","") or row.get("eps_forecast","") or "—"
+                time_s  = str(row.get("time","")).lower()
+                if "before" in time_s or "bmo" in time_s:
+                    timing = "BMO"
+                elif "after" in time_s or "amc" in time_s:
+                    timing = "AMC"
+                else:
+                    timing = "—"
+                if eps_est and eps_est not in ("—","N/A",""):
+                    try: eps_est = f"${float(str(eps_est).replace('$','').replace(',','')):.2f}"
+                    except: pass
+                _add(sym, today_fmt, timing, eps_est or "—")
+
+            # Also grab next 7 days
+            for offset in range(1, 8):
+                d2 = today + __import__("datetime").timedelta(days=offset)
+                try:
+                    r2 = requests.get(
+                        f"https://api.nasdaq.com/api/calendar/earnings?date={d2.strftime('%Y-%m-%d')}",
+                        headers={
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json",
+                            "Referer": "https://www.nasdaq.com/",
+                        },
+                        timeout=10,
+                    )
+                    if r2.status_code == 200:
+                        js2 = r2.json()
+                        for row in (js2.get("data",{}).get("rows",[]) or [])[:30]:
+                            sym2    = str(row.get("symbol","")).strip().upper()
+                            eps2    = row.get("epsForecast","") or "—"
+                            time2   = str(row.get("time","")).lower()
+                            timing2 = "BMO" if "before" in time2 else ("AMC" if "after" in time2 else "—")
+                            if eps2 not in ("—","N/A",""):
+                                try: eps2 = f"${float(str(eps2).replace('$','').replace(',','')):.2f}"
+                                except: pass
+                            _add(sym2, str(d2), timing2, eps2 or "—")
+                except Exception:
+                    continue
+
+        if items:
+            return sorted(items, key=lambda x: x["date"])[:60]
+    except Exception:
+        pass
+
+    # ── 3. Scrape earnings-calendar from multiple free sources ────────────────
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122"}
 
     # Source A: earningswhispers.com calendar
