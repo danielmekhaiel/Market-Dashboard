@@ -23,12 +23,39 @@ GAP_THRESHOLD = 1.5
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-.stApp { background: #000000; color: #e2e4e9; }
+/* ── kill the fragment loading dim ── */
+[data-testid="stStatusWidget"] { display: none !important; }
+div[data-testid="stFragmentLoad"],
+div[aria-label="Loading..."],
+.stSpinner,
+iframe[title="streamlit_fragment"] { opacity: 1 !important; }
+/* Prevent the entire app from dimming during fragment refresh */
+.stApp > div { opacity: 1 !important; transition: none !important; }
+[class*="skeleton"] { display: none !important; }
+/* Streamlit uses this class for the dimming overlay on re-runs */
+.stLoading, [data-testid="stDecoration"] { display: none !important; }
+/* Fragment ghost overlay */
+.element-container > div[style*="opacity"] { opacity: 1 !important; }
+
+.stApp { background: #000000; color: #f0f1f5; font-size: 14px; }
 *, *::before, *::after { box-sizing: border-box; }
 
-.sc-wrap { max-width: 1440px; margin: 0 auto; padding: 0 16px 60px; font-family: 'DM Sans', sans-serif; }
+/* ── global font overrides — everything larger + brighter ── */
+p, div, span, li, td, th { color: inherit; }
+.stMarkdown { color: #f0f1f5; }
+button[kind="secondary"], button[kind="primary"] {
+    font-size: 13px !important;
+    font-family: 'DM Sans', sans-serif !important;
+}
+/* Selectbox text */
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] div { font-size: 13px !important; color: #e2e4e9 !important; }
+/* Tab text */
+.stTabs [data-baseweb="tab"] { font-size: 12px !important; }
+
+.sc-wrap { max-width: 1440px; margin: 0 auto; padding: 0 16px 60px; font-family: 'DM Sans', sans-serif; font-size: 14px; }
 
 /* header */
 .sc-header {
@@ -61,9 +88,9 @@ st.markdown("""
 }
 .sc-mkt-item:last-child { border-right: none; }
 .sc-mkt-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 1.5px; color: #6b7280; text-transform: uppercase; }
-.sc-mkt-val { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700; color: #f0f1f5; }
-.sc-mkt-chg-pos { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4ade80; font-weight: 600; }
-.sc-mkt-chg-neg { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #f87171; font-weight: 600; }
+.sc-mkt-val { font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 700; color: #f0f1f5; }
+.sc-mkt-chg-pos { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4ade80; font-weight: 600; }
+.sc-mkt-chg-neg { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #f87171; font-weight: 600; }
 
 /* section label */
 .sc-section {
@@ -94,7 +121,7 @@ st.markdown("""
     border-bottom: 1px solid rgba(255,255,255,.06);
     background: rgba(0,0,0,.2);
 }
-.sc-panel-title { font-size: 12px; font-weight: 700; color: #e2e4e9; letter-spacing: .8px; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; }
+.sc-panel-title { font-size: 13px; font-weight: 700; color: #e2e4e9; letter-spacing: .8px; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; }
 .sc-count {
     margin-left: auto; font-family: 'IBM Plex Mono', monospace;
     font-size: 11px; padding: 3px 10px; border-radius: 999px;
@@ -135,10 +162,10 @@ st.markdown("""
 .av-dn   { background: rgba(239,68,68,.15); color: #fca5a5; }
 .av-neu  { background: rgba(255,255,255,.08); color: #9ca3af; }
 
-.c-price  { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #e2e4e9; text-align: right; font-weight: 500; }
-.c-pos    { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #4ade80; font-weight: 700; text-align: right; }
-.c-neg    { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #f87171; font-weight: 700; text-align: right; }
-.c-vol    { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9ca3af; text-align: right; }
+.c-price  { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #e2e4e9; text-align: right; font-weight: 500; }
+.c-pos    { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #4ade80; font-weight: 700; text-align: right; }
+.c-neg    { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #f87171; font-weight: 700; text-align: right; }
+.c-vol    { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9ca3af; text-align: right; }
 .c-gap-up { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #4ade80; font-weight: 700; text-align: right; }
 .c-gap-dn { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #f87171; font-weight: 700; text-align: right; }
 
@@ -171,8 +198,8 @@ st.markdown("""
     margin-right: 5px; margin-bottom: 4px; background: rgba(99,102,241,.18); color: #a5b4fc;
     border: 1px solid rgba(99,102,241,.3); vertical-align: middle; letter-spacing: .5px;
 }
-.news-headline { font-size: 14px; color: #f0f1f5; line-height: 1.55; font-weight: 500; }
-.news-meta { font-size: 11px; color: #6b7280; margin-top: 5px; font-family: 'IBM Plex Mono', monospace; }
+.news-headline { font-size: 15px; color: #f0f1f5; line-height: 1.55; font-weight: 500; }
+.news-meta { font-size: 12px; color: #6b7280; margin-top: 5px; font-family: 'IBM Plex Mono', monospace; }
 a.news-link { color: #f0f1f5 !important; text-decoration: none; }
 a.news-link:hover { color: #a5b4fc !important; }
 
@@ -208,7 +235,7 @@ a.news-link:hover { color: #a5b4fc !important; }
 }
 .td-stat:last-child { border-right: none; }
 .td-stat-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 1.5px; color: #4a4e62; text-transform: uppercase; }
-.td-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #c8cad6; font-weight: 600; }
+.td-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #c8cad6; font-weight: 600; }
 .td-stat-value.pos { color: #22c55e; }
 .td-stat-value.neg { color: #ef4444; }
 .td-section-label {
@@ -216,7 +243,7 @@ a.news-link:hover { color: #a5b4fc !important; }
     color: #4a4e62; text-transform: uppercase; padding: 12px 20px 6px;
     border-bottom: 1px solid rgba(255,255,255,.04);
 }
-.td-news-row { padding: 9px 20px; border-bottom: 1px solid rgba(255,255,255,.03); font-size: 12px; color: #9ca3af; line-height: 1.4; }
+.td-news-row { padding: 10px 20px; border-bottom: 1px solid rgba(255,255,255,.03); font-size: 12px; color: #9ca3af; line-height: 1.4; }
 .td-news-row:last-child { border-bottom: none; }
 a.td-news-link { color: #818cf8 !important; text-decoration: none; }
 a.td-news-link:hover { text-decoration: underline; }
@@ -1104,18 +1131,18 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
 .scard{background:#0a0e14;border:1px solid rgba(255,255,255,.09);border-radius:8px;overflow:hidden}
 .scard-head{display:flex;align-items:center;justify-content:space-between;
     padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
-.scard-sym{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;color:#fff;letter-spacing:.5px}
+.scard-sym{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;color:#fff;letter-spacing:.5px}
 .scard-name{font-family:'DM Sans',sans-serif;font-size:11px;color:#6b7280;margin-top:1px}
-.scard-price{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#fff}
+.scard-price{font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;color:#fff}
 .scard-pct-pos{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#22c55e}
 .scard-pct-neg{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#ef4444}
 .scard-dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;
     font-family:'IBM Plex Mono',monospace;letter-spacing:.5px}
 .scard-body{padding:8px 12px;display:flex;flex-direction:column;gap:6px}
 .scard-row{display:flex;align-items:center;justify-content:space-between}
-.scard-lbl{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;
+.scard-lbl{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
     color:#4a4e62;text-transform:uppercase;letter-spacing:1px}
-.scard-val{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#e2e4e9}
+.scard-val{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:#e2e4e9}
 .scard-divider{height:1px;background:rgba(255,255,255,.05);margin:2px 0}
 .scard-sigs{display:flex;flex-wrap:wrap;gap:4px;padding:6px 12px;
     border-top:1px solid rgba(255,255,255,.05)}
