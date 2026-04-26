@@ -1416,78 +1416,230 @@ def render_news_panel(news_items):
 
 
 # ── options flow ──────────────────────────────────────────────────────────────
+TRADIER_API_KEY = st.secrets.get("TRADIER_API_KEY", os.getenv("TRADIER_API_KEY", ""))
+TRADIER_BASE    = "https://api.tradier.com/v1"
+TRADIER_HEADERS = {
+    "Authorization": f"Bearer {TRADIER_API_KEY}",
+    "Accept": "application/json",
+}
+
 @st.cache_data(ttl=60)
-def fetch_options_flow(min_premium=500_000, limit=30):
+def fetch_realtime_quotes_tradier(syms):
+    """Fetch real-time quotes for a batch of symbols via Tradier."""
+    if not TRADIER_API_KEY or not syms:
+        return {}
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=TRADIER_HEADERS,
+            params={"symbols": ",".join(syms), "greeks": "false"},
+            timeout=10,
+        )
+        js = r.json() if r.content else {}
+        quotes_raw = js.get("quotes", {}).get("quote", [])
+        if isinstance(quotes_raw, dict):
+            quotes_raw = [quotes_raw]
+        return {q["symbol"]: q for q in quotes_raw if isinstance(q, dict)}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=60)
+def fetch_option_chain_tradier(sym, expiration=None):
+    """Fetch full option chain for a symbol via Tradier."""
+    if not TRADIER_API_KEY:
+        return []
+    try:
+        # Get expirations first
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/options/expirations",
+            headers=TRADIER_HEADERS,
+            params={"symbol": sym, "includeAllRoots": "true"},
+            timeout=8,
+        )
+        js   = r.json() if r.content else {}
+        exps = js.get("expirations", {}).get("date", [])
+        if not exps:
+            return []
+        if isinstance(exps, str):
+            exps = [exps]
+        exp = expiration or exps[0]
+
+        # Fetch chain
+        r2 = requests.get(
+            f"{TRADIER_BASE}/markets/options/chains",
+            headers=TRADIER_HEADERS,
+            params={"symbol": sym, "expiration": exp, "greeks": "true"},
+            timeout=10,
+        )
+        js2    = r2.json() if r2.content else {}
+        opts   = js2.get("options", {}).get("option", [])
+        if isinstance(opts, dict):
+            opts = [opts]
+        return opts or []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=60)
+def fetch_options_flow(min_premium=500_000, limit=40):
     """
-    Pull unusual options flow via Finnhub unusual activity endpoint,
-    falling back to scanning top tickers manually via yfinance.
+    Real-time options flow scanner.
+    Priority: Tradier (live) → Finnhub (if key) → yfinance (EOD fallback)
     """
     items = []
+    now   = datetime.now().strftime("%H:%M")
 
-    # Finnhub unusual options activity (requires paid tier — gracefully skipped if not available)
+    # ── 1. TRADIER — real-time live flow ─────────────────────────────────────
+    if TRADIER_API_KEY:
+        top_syms = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN",
+                    "GOOGL","JPM","NFLX","COIN","PLTR","MARA","ARM","SMCI","AVGO",
+                    "MU","UBER","GS","BAC","V","XOM","UNH","GME","SOFI","SNAP"]
+
+        # Get real-time stock prices in one call
+        rt_quotes = fetch_realtime_quotes_tradier(top_syms)
+
+        for sym in top_syms:
+            try:
+                spot_data = rt_quotes.get(sym, {})
+                spot      = float(spot_data.get("last") or spot_data.get("close") or 0)
+                if not spot:
+                    continue
+
+                opts = fetch_option_chain_tradier(sym)
+                if not opts:
+                    continue
+
+                for opt in opts:
+                    try:
+                        vol    = int(opt.get("volume")        or 0)
+                        oi     = int(opt.get("open_interest") or 1)
+                        last   = float(opt.get("last")        or 0)
+                        bid    = float(opt.get("bid")         or 0)
+                        ask    = float(opt.get("ask")         or 0)
+                        strike = float(opt.get("strike")      or 0)
+                        exp    = str(opt.get("expiration_date",""))
+                        cp     = str(opt.get("option_type","")).upper()[:1]  # C or P
+                        iv     = float(opt.get("greeks",{}).get("smv_vol") or
+                                       opt.get("implied_volatility") or 0)
+
+                        if vol < 100 or last <= 0:
+                            continue
+
+                        # Premium = last price × volume × 100 (per contract)
+                        prem = last * vol * 100
+                        if prem < min_premium:
+                            continue
+
+                        # Side: bought at ask = aggressive buyer
+                        mid  = (bid + ask) / 2 if bid and ask else last
+                        if last >= ask * 0.98:      side = "ask"
+                        elif last <= bid * 1.02:    side = "bid"
+                        else:                       side = "mid"
+
+                        # DTE
+                        try:
+                            dte = (datetime.strptime(exp, "%Y-%m-%d").date()
+                                   - datetime.now().date()).days
+                        except Exception:
+                            dte = 0
+
+                        # OTM %
+                        otm = abs(strike - spot) / spot * 100 if spot else 0
+
+                        # Vol/OI ratio — >1 means fresh position
+                        vol_oi = vol / oi if oi else 0
+
+                        items.append({
+                            "sym":    sym,
+                            "cp":     cp,
+                            "strike": strike,
+                            "exp":    exp,
+                            "prem":   prem,
+                            "side":   side,
+                            "spot":   spot,
+                            "dte":    dte,
+                            "iv":     round(iv * 100, 1) if iv < 5 else round(iv, 1),
+                            "vol":    vol,
+                            "oi":     oi,
+                            "vol_oi": round(vol_oi, 1),
+                            "otm":    round(otm, 1),
+                            "sweep":  vol > oi * 2 and side == "ask",
+                            "block":  prem >= 1_000_000 and vol < 500,
+                            "time":   now,
+                            "source": "tradier",
+                        })
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        if items:
+            return sorted(items, key=lambda x: x["prem"], reverse=True)[:limit]
+
+    # ── 2. Finnhub unusual activity (paid tier) ───────────────────────────────
     if FINNHUB_API_KEY:
         try:
             r = requests.get(
                 f"https://finnhub.io/api/v1/stock/option-unusual?token={FINNHUB_API_KEY}",
                 timeout=15
             )
-            js = r.json() if r.content else {}
+            js   = r.json() if r.content else {}
             data = js.get("data") or js.get("activity") or []
             for x in data[:limit]:
-                sym     = str(x.get("symbol", x.get("ticker", ""))).upper()
-                cp      = str(x.get("cp", x.get("type", ""))).upper()
-                strike  = x.get("strike") or x.get("strikePrice")
-                exp     = str(x.get("exp") or x.get("expirationDate") or "")[:10]
-                prem    = x.get("premium") or x.get("totalPremium") or 0
-                side    = str(x.get("side") or x.get("aggressor", "")).lower()
-                spot    = x.get("spot") or x.get("underlyingPrice") or 0
-                dte     = x.get("dte") or 0
-                is_sweep = bool(x.get("sweep") or x.get("isSweep"))
-                is_block = bool(x.get("block") or x.get("isBlock"))
+                sym  = str(x.get("symbol", x.get("ticker",""))).upper()
+                cp   = str(x.get("cp", x.get("type",""))).upper()
+                prem = x.get("premium") or x.get("totalPremium") or 0
                 if sym and prem >= min_premium:
                     items.append({
-                        "sym": sym, "cp": cp[:1], "strike": strike,
-                        "exp": exp, "prem": prem, "side": side,
-                        "spot": spot, "dte": dte,
-                        "sweep": is_sweep, "block": is_block,
-                        "time": datetime.now().strftime("%H:%M"),
+                        "sym":    sym, "cp": cp[:1],
+                        "strike": x.get("strike") or x.get("strikePrice"),
+                        "exp":    str(x.get("exp") or x.get("expirationDate",""))[:10],
+                        "prem":   prem,
+                        "side":   str(x.get("side") or x.get("aggressor","")).lower(),
+                        "spot":   x.get("spot") or 0,
+                        "dte":    x.get("dte") or 0,
+                        "iv":     0, "vol": 0, "oi": 0, "vol_oi": 0, "otm": 0,
+                        "sweep":  bool(x.get("sweep") or x.get("isSweep")),
+                        "block":  bool(x.get("block") or x.get("isBlock")),
+                        "time":   now, "source": "finnhub",
                     })
             if items:
                 return sorted(items, key=lambda x: x["prem"], reverse=True)
         except Exception:
             pass
 
-    # yfinance fallback — scan top tickers for large unusual OI/volume options
+    # ── 3. yfinance fallback (EOD data only) ─────────────────────────────────
     top = ["AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD","SPY","QQQ",
-           "JPM","NFLX","BAC","V","XOM","DIS","INTC","PYPL","CRM","UBER"]
+           "JPM","NFLX","BAC","V","XOM","COIN","PLTR","MARA","ARM","AVGO"]
     for sym in top:
         try:
             tk   = yf.Ticker(sym)
             info = tk.info or {}
             spot = info.get("currentPrice") or info.get("regularMarketPrice") or 0
             exps = tk.options
-            if not exps:
-                continue
-            exp = exps[0]
-            chain = tk.option_chain(exp)
-            for df, cp in [(chain.calls, "C"), (chain.puts, "P")]:
-                if df is None or df.empty:
-                    continue
+            if not exps: continue
+            chain = tk.option_chain(exps[0])
+            for df, cp in [(chain.calls,"C"),(chain.puts,"P")]:
+                if df is None or df.empty: continue
                 df = df.copy()
-                df["premium"] = df["lastPrice"] * df["volume"].fillna(0) * 100
-                df = df[df["volume"].fillna(0) > 50]
-                df = df[df["premium"] >= min_premium]
+                df["prem"] = df["lastPrice"] * df["volume"].fillna(0) * 100
+                df = df[(df["volume"].fillna(0) > 50) & (df["prem"] >= min_premium)]
                 for _, row in df.iterrows():
                     vol = int(row.get("volume") or 0)
                     oi  = int(row.get("openInterest") or 1)
                     items.append({
                         "sym": sym, "cp": cp,
-                        "strike": row.get("strike"),
-                        "exp": exp, "prem": row["premium"],
+                        "strike": row.get("strike"), "exp": exps[0],
+                        "prem": row["prem"],
                         "side": "ask" if vol > oi else "mid",
                         "spot": spot, "dte": 0,
+                        "iv": round(float(row.get("impliedVolatility") or 0) * 100, 1),
+                        "vol": vol, "oi": oi,
+                        "vol_oi": round(vol/oi, 1) if oi else 0,
+                        "otm": round(abs(row.get("strike",0)-spot)/spot*100,1) if spot else 0,
                         "sweep": False, "block": False,
-                        "time": datetime.now().strftime("%H:%M"),
+                        "time": now, "source": "yfinance",
                     })
         except Exception:
             continue
@@ -2188,6 +2340,183 @@ def render_calendar(earnings, econ, expected_moves=None):
 
 
 
+@st.cache_data(ttl=300)
+def fetch_daily_briefing():
+    """Pull live market schedule, econ events today, and today's earnings count."""
+    today     = datetime.now().date()
+    today_str = str(today)
+    now       = datetime.now()
+
+    # ── Market session schedule (always static based on ET) ──────────────────
+    schedule = [
+        ("4:00 AM",  "NYSE Pre-market opens",         "🕓"),
+        ("9:30 AM",  "NYSE Regular Session opens",     "⚡"),
+        ("3:00 PM",  "Power Hour begins",              "⚡"),
+        ("4:00 PM",  "NYSE Regular Session closes",    "🔔"),
+    ]
+
+    # Determine current session
+    hour = now.hour
+    if hour < 4:
+        session = ("Pre-Pre Market", "#6b7280")
+    elif hour < 9 or (hour == 9 and now.minute < 30):
+        session = ("Pre-Market 🌅", "#f59e0b")
+    elif hour < 15:
+        session = ("Market Open 🟢", "#22c55e")
+    elif hour < 16:
+        session = ("Power Hour ⚡", "#06b6d4")
+    else:
+        session = ("After Hours 🌙", "#a78bfa")
+
+    # ── Global sessions ───────────────────────────────────────────────────────
+    global_sessions = [
+        ("🌏 Asian Sessions",  "Sydney: 8:00 PM – 2:00 AM ET  |  Shanghai/HK: 9:30 PM – 3:00/4:00 AM ET"),
+        ("🌍 London (LSE)",    "3:00 AM – 11:30 AM ET"),
+    ]
+
+    # ── Today's high-impact econ events ──────────────────────────────────────
+    econ_today = []
+    try:
+        econ_all = fetch_econ_calendar()
+        econ_today = [e for e in (econ_all or [])
+                      if e.get("date","") == today_str and e.get("impact") == "HIGH"]
+    except Exception:
+        pass
+
+    # ── Today's earnings count ────────────────────────────────────────────────
+    earn_today = []
+    earn_bmo   = []
+    earn_amc   = []
+    try:
+        earn_all   = fetch_earnings_calendar()
+        earn_today = [e for e in (earn_all or []) if e.get("date","") == today_str]
+        earn_bmo   = [e for e in earn_today if e.get("timing") == "BMO"]
+        earn_amc   = [e for e in earn_today if e.get("timing") == "AMC"]
+    except Exception:
+        pass
+
+    return {
+        "today_str":      today.strftime("%A, %B %d, %Y"),
+        "session":        session,
+        "schedule":       schedule,
+        "global":         global_sessions,
+        "econ_today":     econ_today,
+        "earn_today":     earn_today,
+        "earn_bmo":       earn_bmo,
+        "earn_amc":       earn_amc,
+        "earn_count":     len(earn_today),
+    }
+
+
+def render_daily_briefing(briefing):
+    today_str    = briefing.get("today_str","")
+    session_name, session_color = briefing.get("session", ("Market","#22c55e"))
+    schedule     = briefing.get("schedule",[])
+    global_sess  = briefing.get("global",[])
+    econ_today   = briefing.get("econ_today",[])
+    earn_bmo     = briefing.get("earn_bmo",[])
+    earn_amc     = briefing.get("earn_amc",[])
+    earn_count   = briefing.get("earn_count",0)
+
+    # Build schedule rows
+    sched_html = ""
+    for time_s, label, emoji in schedule:
+        sched_html += f'<div style="padding:2px 0;font-size:13px;color:#c8cad6">{emoji} <span style="color:#6b7280;font-family:\'IBM Plex Mono\',monospace;font-size:11px">{time_s}</span> — {label}</div>'
+
+    # Global sessions
+    global_html = ""
+    for name, hours in global_sess:
+        global_html += f'<div style="padding:2px 0;font-size:13px;color:#c8cad6"><span style="font-weight:600">{name}:</span> <span style="color:#9ca3af">{hours}</span></div>'
+
+    # Econ events
+    if econ_today:
+        econ_html = ""
+        for e in econ_today[:5]:
+            econ_html += f'<div style="padding:2px 0;font-size:13px;color:#f87171">⚠ {e.get("event","")} <span style="color:#6b7280;font-size:11px">{e.get("time","")}</span></div>'
+    else:
+        econ_html = '<div style="font-size:13px;color:#4ade80">✅ No major scheduled economic events today</div>'
+
+    # Earnings
+    earn_html = ""
+    if earn_count:
+        earn_html += f'<div style="font-size:13px;font-weight:600;color:#e2e4e9;margin-bottom:4px">📋 {earn_count} earnings reports today</div>'
+        if earn_bmo:
+            earn_html += '<div style="font-size:12px;color:#00c4b4;font-weight:600;margin-bottom:2px">▲ Before Market Open:</div>'
+            for e in earn_bmo[:8]:
+                eps = e.get("eps_est","—")
+                earn_html += f'<div style="font-size:12px;color:#e2e4e9;padding:1px 0"><span style="font-family:\'IBM Plex Mono\',monospace;font-weight:700">{e["sym"]}</span> <span style="color:#6b7280;font-size:11px">EPS est: {eps}</span></div>'
+        if earn_amc:
+            earn_html += '<div style="font-size:12px;color:#f59e0b;font-weight:600;margin:4px 0 2px">▼ After Market Close:</div>'
+            for e in earn_amc[:8]:
+                eps = e.get("eps_est","—")
+                earn_html += f'<div style="font-size:12px;color:#e2e4e9;padding:1px 0"><span style="font-family:\'IBM Plex Mono\',monospace;font-weight:700">{e["sym"]}</span> <span style="color:#6b7280;font-size:11px">EPS est: {eps}</span></div>'
+        if not earn_bmo and not earn_amc and earn_count:
+            tickers = ", ".join(e["sym"] for e in briefing.get("earn_today",[])[:10])
+            earn_html += f'<div style="font-size:12px;color:#9ca3af">{tickers}</div>'
+
+    st.markdown(f"""<style>
+.briefing {{
+    background:#080b10;
+    border:1px solid rgba(255,255,255,.09);
+    border-left:3px solid {session_color};
+    border-radius:10px;
+    padding:14px 18px;
+    margin-bottom:12px;
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:18px;
+}}
+.briefing-col {{ display:flex; flex-direction:column; gap:6px; }}
+.briefing-head {{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px; font-weight:700; letter-spacing:1.5px;
+    text-transform:uppercase; color:#4a4e62;
+    border-bottom:1px solid rgba(255,255,255,.05);
+    padding-bottom:5px; margin-bottom:4px;
+}}
+.briefing-title {{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:14px; font-weight:700; color:#ffffff; margin-bottom:2px;
+}}
+.briefing-session {{
+    font-size:12px; font-weight:700; color:{session_color};
+    background:{session_color}18;
+    border:1px solid {session_color}44;
+    border-radius:4px; padding:2px 8px;
+    display:inline-block; margin-bottom:4px;
+    font-family:'IBM Plex Mono',monospace;
+}}
+.briefing-date {{
+    font-size:11px; color:#6b7280;
+    font-family:'IBM Plex Mono',monospace;
+}}
+</style>
+<div class="briefing">
+  <div class="briefing-col">
+    <div class="briefing-head">☀ Good Morning — Market Briefing</div>
+    <div class="briefing-title">Market Scanner</div>
+    <div class="briefing-session">{session_name}</div>
+    <div class="briefing-date">{today_str}</div>
+    <div style="margin-top:6px">
+      <div class="briefing-head">📅 Market Schedule (ET)</div>
+      {sched_html}
+    </div>
+    <div style="margin-top:6px">
+      {global_html}
+    </div>
+  </div>
+  <div class="briefing-col">
+    <div class="briefing-head">⚠ High-Impact Events Today</div>
+    {econ_html}
+  </div>
+  <div class="briefing-col">
+    <div class="briefing-head">📋 Earnings Today</div>
+    {earn_html if earn_html else '<div style="font-size:13px;color:#4a4e62">No earnings reports today</div>'}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
 # ── market index summary bar ──────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_index_bar():
@@ -2325,6 +2654,13 @@ def live_dashboard():
 </div>
 <div class="sc-mkt-bar">{mkt_bar_html}</div>
 """, unsafe_allow_html=True)
+
+    # ── Daily briefing ────────────────────────────────────────────────────────
+    try:
+        briefing = fetch_daily_briefing()
+        render_daily_briefing(briefing)
+    except Exception:
+        pass
 
     # Ticker detail panel
     if st.session_state.get("selected_ticker"):
