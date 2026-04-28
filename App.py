@@ -25,19 +25,26 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-/* ── kill the fragment loading dim ── */
-[data-testid="stStatusWidget"] { display: none !important; }
-div[data-testid="stFragmentLoad"],
-div[aria-label="Loading..."],
-.stSpinner,
-iframe[title="streamlit_fragment"] { opacity: 1 !important; }
-/* Prevent the entire app from dimming during fragment refresh */
-.stApp > div { opacity: 1 !important; transition: none !important; }
-[class*="skeleton"] { display: none !important; }
-/* Streamlit uses this class for the dimming overlay on re-runs */
-.stLoading, [data-testid="stDecoration"] { display: none !important; }
-/* Fragment ghost overlay */
-.element-container > div[style*="opacity"] { opacity: 1 !important; }
+/* ── kill ALL loading overlays and dims ── */
+[data-testid="stStatusWidget"],
+[data-testid="stDecoration"],
+[data-testid="stToolbar"],
+.stSpinner > div,
+.stLoading { display: none !important; }
+
+/* Kill the fragment dim — Streamlit sets inline opacity on the container */
+[data-testid="stMain"] > div,
+[data-testid="stVerticalBlock"] > div,
+.element-container,
+.stMarkdown,
+.block-container { opacity: 1 !important; transition: none !important; filter: none !important; }
+
+/* Kill skeleton shimmer */
+[class*="skeleton"], [class*="Skeleton"] { display: none !important; }
+
+/* Streamlit 1.3x+ uses this for fragment loading state */
+[data-fragment-id] { opacity: 1 !important; }
+[data-stale="true"] { opacity: 1 !important; }
 
 .stApp { background: #000000; color: #f0f1f5; font-size: 14px; }
 *, *::before, *::after { box-sizing: border-box; }
@@ -749,28 +756,15 @@ def fetch_ticker_news(ticker):
 @st.cache_data(ttl=60)
 def fetch_gap_data(tickers_tuple):
     """
-    Fetch true pre-market gap data.
-    Gap = (today's pre-market/open price - yesterday's close) / yesterday's close
-    Uses 1-day 1m interval which includes pre-market data (4am-9:30am).
-    Only returns tickers with a real gap of 1.5%+.
+    True gap scanner — gap = today open vs PREVIOUS DAY close only.
+    Uses daily bars so gap is clean: yesterday 4pm close → today 9:30am open.
+    No intraday noise, no pre-market extension unless it holds at open.
     """
     import pandas as pd
-    tickers   = list(tickers_tuple)
-    gaps      = []
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    tickers = list(tickers_tuple)
+    gaps    = []
 
-    # Download 2 days of 1m data — includes pre-market for today
-    try:
-        raw = yf.download(
-            tickers, period="2d", interval="1m",
-            group_by="ticker", auto_adjust=True,
-            progress=False, threads=False,
-            prepost=True,   # include pre/post market data
-        )
-    except Exception:
-        return []
-
-    # Daily for prev close
+    # One daily download — 5 days is enough for prev close + today open
     try:
         daily_raw = yf.download(
             tickers, period="5d", interval="1d",
@@ -778,7 +772,9 @@ def fetch_gap_data(tickers_tuple):
             progress=False, threads=False,
         )
     except Exception:
-        daily_raw = pd.DataFrame()
+        return []
+
+    today = datetime.now().date()
 
     for t in tickers:
         try:
@@ -790,111 +786,51 @@ def fetch_gap_data(tickers_tuple):
                 return all_data[sym] if sym in all_data.columns.get_level_values(0) \
                     else pd.DataFrame()
 
-            intra = _get(raw, t)
             daily = _get(daily_raw, t)
-
-            if intra is None or intra.empty:
+            if daily is None or daily.empty or len(daily) < 2:
                 continue
 
-            # Yesterday's official close
-            prev_close = None
-            if daily is not None and not daily.empty and len(daily) >= 2:
-                prev_close = float(daily["Close"].iloc[-2])
-            if not prev_close:
+            # Ensure we have today's row
+            last_date = daily.index[-1]
+            if hasattr(last_date, "date"):
+                last_date = last_date.date()
+            if last_date != today:
+                continue  # no data for today yet
+
+            # Previous day close = second-to-last row
+            prev_close = float(daily["Close"].iloc[-2])
+            # Today open = last row open (official 9:30am open)
+            today_open = float(daily["Open"].iloc[-1])
+            # Current price = last row close (intraday latest)
+            price      = float(daily["Close"].iloc[-1])
+            # Volume today
+            vol        = int(daily["Volume"].iloc[-1]) if "Volume" in daily.columns else 0
+
+            if prev_close <= 0 or today_open <= 0:
                 continue
 
-            # Today's data only (including pre-market)
-            today_mask = intra.index.strftime("%Y-%m-%d") == today_str
-            today_df   = intra[today_mask]
-            if today_df.empty:
-                # fallback — use last available
-                today_df = intra.tail(78)
+            # Gap is purely open vs prev close
+            gap_pct = ((today_open - prev_close) / prev_close) * 100
+            day_pct = ((price     - prev_close) / prev_close) * 100
 
-            # Pre-market open = first bar of today
-            premarket_open = float(today_df["Open"].iloc[0])
-
-            # Regular market open = first bar at or after 9:30 ET
-            market_df = today_df.copy()
-            try:
-                market_df.index = market_df.index.tz_convert("US/Eastern")
-                rth_mask  = (market_df.index.hour > 9) | \
-                            ((market_df.index.hour == 9) & (market_df.index.minute >= 30))
-                rth_df    = market_df[rth_mask]
-                open_p    = float(rth_df["Open"].iloc[0]) if not rth_df.empty else premarket_open
-            except Exception:
-                open_p = premarket_open
-
-            # Current price
-            price     = float(today_df["Close"].iloc[-1])
-            today_vol = int(today_df["Volume"].sum()) if "Volume" in today_df.columns else 0
-
-            # Gap % — measured from prev close to today's open
-            gap_pct = ((open_p - prev_close) / prev_close) * 100
-            pct     = ((price  - prev_close) / prev_close) * 100
-
-            # Only keep real gaps — 1.5%+
+            # Only real gaps — at least 1.5%
             if abs(gap_pct) < GAP_THRESHOLD:
                 continue
 
             gaps.append({
                 "ticker":     t,
-                "price":      price,
-                "open":       open_p,
-                "prev_close": prev_close,
-                "gap_pct":    gap_pct,
-                "pct":        pct,
-                "volume":     today_vol,
-                "change":     price - prev_close,
+                "price":      round(price, 2),
+                "open":       round(today_open, 2),
+                "prev_close": round(prev_close, 2),
+                "gap_pct":    round(gap_pct, 2),
+                "pct":        round(day_pct, 2),
+                "volume":     vol,
+                "change":     round(price - prev_close, 2),
             })
         except Exception:
             continue
 
-    # Sort by absolute gap size
     return sorted(gaps, key=lambda x: abs(x["gap_pct"]), reverse=True)
-
-
-    syms  = []
-    block = {"USD","CEO","ETF","EPS","PCT","NYSE","NASDAQ","THE","FOR","AND","BUT",
-             "WITH","ALL","NEW","INC","LLC","LTD","PLC","EST","EDT","AM","PM","IPO"}
-
-    # ── Single fast Finviz most-active scrape ─────────────────────────────────
-    try:
-        r = requests.get(
-            "https://finviz.com/screener.ashx?v=111&s=ta_topvolume&o=-volume",
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finviz.com/"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            found = re.findall(r'class="screener-link-primary">([A-Z]{1,5})<', r.text)
-            for s in found:
-                if s not in syms and s not in block:
-                    syms.append(s)
-    except Exception:
-        pass
-
-    # ── Yahoo Finance most active (single call) ───────────────────────────────
-    if len(syms) < 20:
-        try:
-            r = requests.get(
-                "https://finance.yahoo.com/markets/stocks/most-active/",
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
-            )
-            for s in re.findall(r'"symbol":"([A-Z]{1,5})"', r.text):
-                if s not in syms and s not in block:
-                    syms.append(s)
-        except Exception:
-            pass
-
-    # ── Core watchlist always included ───────────────────────────────────────
-    core = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL",
-            "JPM","V","XOM","MA","BAC","WMT","UNH","GS","NFLX","COIN",
-            "PLTR","SOFI","MARA","GME","SMCI","ARM","MU","AVGO","UBER","SNAP"]
-    for s in core:
-        if s not in syms:
-            syms.append(s)
-
-    clean_syms = [s for s in dict.fromkeys(syms) if 1 < len(s) <= 5 and s not in block]
-    return clean_syms[:60]   # hard cap at 60 — keeps downloads fast
 
 
 @st.cache_data(ttl=180)
@@ -1127,10 +1063,10 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
         st.markdown('<div class="sc-empty">NO RESULTS</div>', unsafe_allow_html=True)
     else:
         st.markdown("""<style>
-.scard-wrap{display:flex;flex-direction:column;gap:8px;padding:10px 12px}
-.scard{background:#0a0e14;border:1px solid rgba(255,255,255,.09);border-radius:8px;overflow:hidden}
+.scard-wrap{display:flex;flex-direction:column;gap:6px;padding:6px 8px}
+.scard{background:#0a0e14;border:1px solid rgba(255,255,255,.09);border-radius:7px;overflow:hidden;width:100%}
 .scard-head{display:flex;align-items:center;justify-content:space-between;
-    padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+    padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.07)}
 .scard-sym{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;color:#fff;letter-spacing:.5px}
 .scard-name{font-family:'DM Sans',sans-serif;font-size:11px;color:#6b7280;margin-top:1px}
 .scard-price{font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;color:#fff}
@@ -1138,7 +1074,7 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
 .scard-pct-neg{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:#ef4444}
 .scard-dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;
     font-family:'IBM Plex Mono',monospace;letter-spacing:.5px}
-.scard-body{padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.scard-body{padding:6px 10px;display:flex;flex-direction:column;gap:4px}
 .scard-row{display:flex;align-items:center;justify-content:space-between}
 .scard-lbl{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
     color:#4a4e62;text-transform:uppercase;letter-spacing:1px}
@@ -1230,7 +1166,9 @@ def render_scan_panel(title, rows, direction, page_key, scan_data=None):
 </div>"""
 
         cards_html += '</div>'
-        st.markdown(cards_html, unsafe_allow_html=True)
+        col_c, col_sp = st.columns([3, 5])
+        with col_c:
+            st.markdown(cards_html, unsafe_allow_html=True)
 
         st.markdown(
             f'<div class="sc-pg"><span class="pg-info">{start+1}–'
@@ -2080,88 +2018,42 @@ def fetch_earnings_calendar():
 
 @st.cache_data(ttl=1800)
 def fetch_econ_calendar():
-    """Scrape Forex Factory for economic calendar data, fall back to Finnhub."""
+    """Fetch economic calendar — NASDAQ API → Finnhub → static fallback."""
     items = []
     today = datetime.now().date()
+    today_str = str(today)
 
-    # ── 1. Forex Factory scrape ───────────────────────────────────────────────
+    # ── 1. NASDAQ economic events API (no key, reliable) ─────────────────────
     try:
-        from bs4 import BeautifulSoup
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.forexfactory.com/",
-        }
-        r = requests.get("https://www.forexfactory.com/calendar", headers=headers, timeout=20)
+        r = requests.get(
+            "https://api.nasdaq.com/api/calendar/economicevents",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://www.nasdaq.com/",
+            },
+            timeout=15,
+        )
         if r.status_code == 200:
-            soup = BeautifulSoup(r.text, "html.parser")
-            table = soup.find("table", class_=re.compile(r"calendar"))
-            if not table:
-                table = soup.find("table")
-            current_date = str(today)
-            if table:
-                for row in table.find_all("tr", class_=re.compile(r"calendar_row|flexbox")):
-                    try:
-                        # Date cell — only present on first row of each day
-                        date_cell = row.find("td", class_=re.compile(r"date|day"))
-                        if date_cell and date_cell.get_text(strip=True):
-                            raw_date = date_cell.get_text(strip=True)
-                            # FF format: "Mon Apr 15" or "Apr 15"
-                            for fmt in ["%a %b %d", "%b %d", "%A %B %d"]:
-                                try:
-                                    parsed = datetime.strptime(f"{raw_date} {today.year}", f"{fmt} %Y")
-                                    current_date = parsed.strftime("%Y-%m-%d")
-                                    break
-                                except ValueError:
-                                    continue
-
-                        # Time
-                        time_cell = row.find("td", class_=re.compile(r"time"))
-                        time_str  = time_cell.get_text(strip=True) if time_cell else ""
-
-                        # Currency
-                        cur_cell  = row.find("td", class_=re.compile(r"currency"))
-                        currency  = cur_cell.get_text(strip=True) if cur_cell else ""
-
-                        # Impact — FF uses icon classes: high, medium, low
-                        imp_cell  = row.find("td", class_=re.compile(r"impact"))
-                        impact    = "LOW"
-                        if imp_cell:
-                            imp_html = str(imp_cell)
-                            if "high" in imp_html.lower():   impact = "HIGH"
-                            elif "medium" in imp_html.lower() or "med" in imp_html.lower(): impact = "MED"
-
-                        # Event name
-                        ev_cell   = row.find("td", class_=re.compile(r"event"))
-                        event     = ev_cell.get_text(strip=True) if ev_cell else ""
-
-                        # Actual / Forecast / Previous
-                        act_cell  = row.find("td", class_=re.compile(r"actual"))
-                        fore_cell = row.find("td", class_=re.compile(r"forecast"))
-                        prev_cell = row.find("td", class_=re.compile(r"previous"))
-                        actual    = act_cell.get_text(strip=True)  if act_cell  else "—"
-                        forecast  = fore_cell.get_text(strip=True) if fore_cell else "—"
-                        previous  = prev_cell.get_text(strip=True) if prev_cell else "—"
-
-                        if event and current_date >= str(today):
-                            items.append({
-                                "event":    clean(event),
-                                "date":     current_date,
-                                "time":     time_str or "—",
-                                "currency": currency or "USD",
-                                "impact":   impact,
-                                "estimate": forecast or "—",
-                                "actual":   actual   or "—",
-                                "previous": previous or "—",
-                                "type":     "econ",
-                                "source":   "forexfactory",
-                            })
-                    except Exception:
-                        continue
-
-        if items:
-            return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH", x["currency"] != "USD"))
+            js = r.json() or {}
+            rows = (js.get("data") or {}).get("rows") or []
+            for row in rows:
+                event  = clean(str(row.get("eventName") or row.get("name") or ""))
+                date_s = str(row.get("eventDate") or row.get("date") or "")[:10]
+                time_s = str(row.get("eventTime") or row.get("time") or "—")
+                imp_r  = str(row.get("importance") or row.get("impact") or "").upper()
+                actual = str(row.get("actual") or "—")
+                fore   = str(row.get("forecast") or row.get("consensus") or "—")
+                ccy    = str(row.get("currency") or "USD").upper()
+                if event and date_s >= today_str:
+                    imp = "HIGH" if imp_r in ("HIGH","3","***","IMPORTANT") else \
+                          "MED"  if imp_r in ("MED","MEDIUM","2","**") else "LOW"
+                    items.append({"event": event, "date": date_s, "time": time_s,
+                                  "currency": ccy, "impact": imp,
+                                  "estimate": fore, "actual": actual,
+                                  "type": "econ", "source": "nasdaq"})
+            if items:
+                return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH"))
     except Exception:
         pass
 
@@ -2170,48 +2062,40 @@ def fetch_econ_calendar():
         try:
             r = requests.get(
                 f"https://finnhub.io/api/v1/calendar/economic?token={FINNHUB_API_KEY}",
-                timeout=15
+                timeout=15,
             )
             js = r.json() if r.content else {}
             for x in (js.get("economicCalendar") or [])[:40]:
                 event  = clean(x.get("event",""))
                 date_s = str(x.get("time",""))[:10]
                 impact = str(x.get("impact","")).lower()
-                actual = x.get("actual","")
-                est    = x.get("estimate","")
-                if event and date_s >= str(today):
-                    imp_label = "HIGH" if "high" in impact else ("MED" if "medium" in impact or "med" in impact else "LOW")
-                    items.append({
-                        "event": event, "date": date_s,
-                        "time": "—", "currency": "USD",
-                        "impact": imp_label,
-                        "estimate": str(est) if est else "—",
-                        "actual":   str(actual) if actual else "—",
-                        "previous": "—",
-                        "type": "econ", "source": "finnhub",
-                    })
+                if event and date_s >= today_str:
+                    imp = "HIGH" if "high" in impact else ("MED" if "med" in impact else "LOW")
+                    items.append({"event": event, "date": date_s, "time": "—",
+                                  "currency": "USD", "impact": imp,
+                                  "estimate": str(x.get("estimate","") or "—"),
+                                  "actual":   str(x.get("actual","")   or "—"),
+                                  "type": "econ", "source": "finnhub"})
             if items:
                 return sorted(items, key=lambda x: (x["date"], x["impact"] != "HIGH"))
         except Exception:
             pass
 
     # ── 3. Static fallback ────────────────────────────────────────────────────
-    fallback = [
-        {"event": "FOMC Meeting Minutes", "impact": "HIGH"},
-        {"event": "CPI (Core) YoY",       "impact": "HIGH"},
-        {"event": "Initial Jobless Claims","impact": "MED"},
-        {"event": "Nonfarm Payrolls",      "impact": "HIGH"},
-        {"event": "GDP Growth Rate QoQ",   "impact": "HIGH"},
-        {"event": "Retail Sales MoM",      "impact": "MED"},
-        {"event": "PCE Price Index YoY",   "impact": "HIGH"},
-        {"event": "Consumer Confidence",   "impact": "MED"},
-        {"event": "ISM Manufacturing PMI", "impact": "MED"},
-        {"event": "Fed Chair Speech",      "impact": "HIGH"},
-    ]
-    for ev in fallback:
-        items.append({**ev, "date": str(today), "time": "—", "currency": "USD",
-                      "estimate": "—", "actual": "—", "previous": "—",
-                      "type": "econ", "source": "static"})
+    for ev in [
+        {"event":"FOMC Minutes",          "impact":"HIGH"},
+        {"event":"CPI YoY",               "impact":"HIGH"},
+        {"event":"Initial Jobless Claims","impact":"MED"},
+        {"event":"Nonfarm Payrolls",       "impact":"HIGH"},
+        {"event":"GDP Growth QoQ",         "impact":"HIGH"},
+        {"event":"Retail Sales MoM",       "impact":"MED"},
+        {"event":"PCE Price Index YoY",    "impact":"HIGH"},
+        {"event":"Consumer Confidence",    "impact":"MED"},
+        {"event":"ISM Manufacturing PMI",  "impact":"MED"},
+        {"event":"Fed Chair Speech",       "impact":"HIGH"},
+    ]:
+        items.append({**ev, "date": today_str, "time":"—", "currency":"USD",
+                      "estimate":"—", "actual":"—", "type":"econ", "source":"static"})
     return items
 
 
